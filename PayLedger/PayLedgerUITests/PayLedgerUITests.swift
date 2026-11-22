@@ -410,7 +410,179 @@ final class PayLedgerUITests: XCTestCase {
                        "逐笔行应写入当时选中的子类，而非后来新增的子类")
     }
 
+    /// 账单入口与展开：从首页进入周/月/年账单，用示例金额核对小计、逐笔明细
+    /// 与多个月份各自独立展开。全程示例账目，真实账本留在用户设备。
+    func testBillEntriesNavigateAndExpandWithExampleAmounts() {
+        let ledger = "uitest-\(UUID().uuidString).json"
+        let app = XCUIApplication()
+        app.launchEnvironment = [
+            "PAYLEDGER_TEST_LEDGER": ledger,
+            "PAYLEDGER_TEST_NOW": "2026-11-18T10:00:00" // Wednesday
+        ]
+        app.launch()
+
+        // 首页风景图随应用打包、离线可用；截图留证核对浅色列表、绿色金额与橙色入口。
+        XCTAssertTrue(app.otherElements["landscapeHeader"].waitForExistence(timeout: 5))
+        let homeShot = XCTAttachment(screenshot: app.screenshot())
+        homeShot.name = "home-landscape-and-summary"
+        homeShot.lifetime = .keepAlways
+        add(homeShot)
+
+        save("12.34", in: app) // 食品酒水 · 早午晚餐
+        // Second example amount in another primary category.
+        app.buttons["记一笔"].tap()
+        let amountField = app.textFields["0.00"]
+        XCTAssertTrue(amountField.waitForExistence(timeout: 5))
+        amountField.tap()
+        amountField.typeText("87.65")
+        app.buttons["chooseCategory"].tap()
+        let primaryWheel = app.pickers["primaryCategoryPicker"]
+        XCTAssertTrue(primaryWheel.waitForExistence(timeout: 5))
+        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "交通")
+        app.buttons["doneCategoryWheel"].tap()
+        app.buttons["保存"].tap()
+
+        // 周账单：一级分类小计与展开后的逐笔明细。
+        openBill("本周", in: app)
+        XCTAssertTrue(app.navigationBars["周账单"].waitForExistence(timeout: 5))
+        assertBillTotal("99.99", in: app)
+        XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 0, "展开前不显示逐笔明细")
+        tapCell(with: "食品酒水", in: app)
+        XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 1)
+        XCTAssertGreaterThanOrEqual(countCells(containing: "12.34", in: app), 1)
+        goHome(in: app)
+
+        // 月账单：进入时明细默认收起；点当月汇总行在原页展开/收起按日期明细。
+        openBill("本月", in: app)
+        XCTAssertTrue(app.navigationBars["月账单"].waitForExistence(timeout: 5))
+        assertBillTotal("99.99", in: app)
+        XCTAssertEqual(countCells(containing: "2026-11-18", in: app), 0, "进入月账单时日期明细应默认收起")
+        tapCell(with: "2026年11月", in: app)
+        XCTAssertTrue(cellExists(with: "2026-11-18", in: app))
+        XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 1)
+        XCTAssertEqual(countCells(containing: "公交地铁", in: app), 1)
+        tapCell(with: "2026年11月", in: app)
+        XCTAssertEqual(countCells(containing: "2026-11-18", in: app), 0, "再次点按月汇总行应收起明细")
+        XCTAssertTrue(app.navigationBars["月账单"].exists, "展开收起仍停留在月账单页")
+        goHome(in: app)
+
+        // 年账单：单点月份即直接显示按日期分组的逐笔记录，各月独立展开/收起。
+        openBill("本年", in: app)
+        XCTAssertTrue(app.navigationBars["年账单"].waitForExistence(timeout: 5))
+        assertBillTotal("99.99", in: app)
+        tapCell(with: "1月", in: app)
+        XCTAssertTrue(cellExists(with: "本月无记录", in: app))
+        // SwiftUI List 按需加载：先滚到 11 月汇总行，再在点按前确认两笔示例明细均不可见，
+        // 才能发现 11 月附近提前显示逐笔内容的回归。
+        guard let november = findCell("11月", in: app, swipeUp: true) else {
+            XCTFail("找不到 11 月"); return
+        }
+        XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 0, "滚到 11 月后、点按前不应显示逐笔内容")
+        XCTAssertEqual(countCells(containing: "公交地铁", in: app), 0, "滚到 11 月后、点按前不应显示第二笔逐笔内容")
+        november.tap()
+        XCTAssertTrue(cellExists(with: "2026-11-18", in: app))
+        // 逐行配对核对：子类与金额必须在同一行，金额互换也会失败。
+        assertPersistedRow(category: "早午晚餐", amount: "12.34", in: app)
+        assertPersistedRow(category: "公交地铁", amount: "87.65", in: app)
+        XCTAssertFalse(app.cells.allElementsBoundByIndex.contains {
+            $0.staticTexts["早午晚餐"].exists && $0.staticTexts["87.65"].exists
+        }, "同一逐笔行的子类与金额必须配对，不能跨行混用")
+        XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 1, "单点月份应直接显示逐笔子类行")
+        XCTAssertEqual(countCells(containing: "公交地铁", in: app), 1)
+        guard let january = findCell("1月", in: app, swipeUp: false) else {
+            XCTFail("找不到 1 月"); return
+        }
+        XCTAssertTrue(cellExists(with: "本月无记录", in: app), "展开其它月份不应收起已展开的 1 月")
+        january.tap()
+        XCTAssertEqual(countCells(containing: "本月无记录", in: app), 0, "再次点按应收起该月份")
+        guard let novemberAgain = findCell("11月", in: app, swipeUp: true) else {
+            XCTFail("找不到 11 月"); return
+        }
+        XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 1, "收起其它月份不应影响已展开的 11 月")
+        novemberAgain.tap()
+        XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 0, "收起 11 月应移除其逐笔明细")
+        XCTAssertEqual(countCells(containing: "公交地铁", in: app), 0, "收起 11 月应移除第二笔逐笔明细")
+        XCTAssertEqual(countCells(containing: "2026-11-18", in: app), 0, "收起 11 月应移除其日期行")
+        XCTAssertNotNil(findCell("合计", in: app, swipeUp: false))
+        assertBillTotal("99.99", in: app)
+        goHome(in: app)
+
+        // 重启后账单仍由同一份示例账本计算。
+        app.terminate()
+        app.launchEnvironment = [
+            "PAYLEDGER_TEST_LEDGER": ledger,
+            "PAYLEDGER_TEST_NOW": "2026-11-18T10:00:00"
+        ]
+        app.launch()
+        openBill("本周", in: app)
+        XCTAssertTrue(app.navigationBars["周账单"].waitForExistence(timeout: 5))
+        assertBillTotal("99.99", in: app)
+    }
+
     // MARK: - Helpers
+
+    private func openBill(_ label: String, in app: XCUIApplication,
+                          file: StaticString = #filePath, line: UInt = #line) {
+        guard let row = app.cells.allElementsBoundByIndex.first(where: {
+            $0.staticTexts[label].exists
+        }) else {
+            XCTFail("缺少账单入口：\(label)", file: file, line: line)
+            return
+        }
+        row.tap()
+    }
+
+    private func assertBillTotal(_ expected: String, in app: XCUIApplication,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        guard let row = app.cells.allElementsBoundByIndex.first(where: {
+            $0.staticTexts["合计"].exists
+        }) else {
+            XCTFail("缺少账单合计行", file: file, line: line)
+            return
+        }
+        let values = row.staticTexts.allElementsBoundByIndex.map(\.label)
+        XCTAssertTrue(values.contains(expected),
+                      "账单合计应为 \(expected)，实际为 \(values)", file: file, line: line)
+    }
+
+    private func tapCell(with text: String, in app: XCUIApplication,
+                         file: StaticString = #filePath, line: UInt = #line) {
+        guard let cell = app.cells.allElementsBoundByIndex.first(where: {
+            $0.staticTexts[text].exists
+        }) else {
+            XCTFail("找不到可点按的单元格：\(text)", file: file, line: line)
+            return
+        }
+        cell.tap()
+    }
+
+    /// SwiftUI List only materialises visible rows, so long bill lists need a
+    /// scroll before an off-screen month can be tapped.
+    private func findCell(_ text: String, in app: XCUIApplication,
+                          swipeUp: Bool, maxSwipes: Int = 20) -> XCUIElement? {
+        for _ in 0..<maxSwipes {
+            if let cell = app.cells.allElementsBoundByIndex.first(where: {
+                $0.staticTexts[text].exists
+            }) { return cell }
+            if swipeUp { app.swipeUp() } else { app.swipeDown() }
+        }
+        return app.cells.allElementsBoundByIndex.first { $0.staticTexts[text].exists }
+    }
+
+    private func cellExists(with text: String, in app: XCUIApplication) -> Bool {
+        app.cells.allElementsBoundByIndex.contains { $0.staticTexts[text].exists }
+    }
+
+    private func countCells(containing text: String, in app: XCUIApplication) -> Int {
+        app.cells.allElementsBoundByIndex.filter { $0.staticTexts[text].exists }.count
+    }
+
+    private func goHome(in app: XCUIApplication,
+                        file: StaticString = #filePath, line: UInt = #line) {
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.exists, "缺少返回按钮", file: file, line: line)
+        back.tap()
+    }
 
     private func save(_ amount: String, in app: XCUIApplication) {
         app.buttons["记一笔"].tap()

@@ -2346,6 +2346,105 @@ final class PayLedgerTests: XCTestCase {
         XCTAssertThrowsError(try unreadable.renamePrimary(id: "food", to: "餐饮"))
         XCTAssertEqual(try Data(contentsOf: url), corrupt)
     }
+
+    // MARK: - Issue 03: week / month / year bill seams (example amounts only)
+
+    private func exampleDate(_ year: Int, _ month: Int, _ day: Int, hour: Int = 12) -> Date {
+        LedgerStats.calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
+    }
+
+    func testWeekBillGroupsByPrimaryCategoryWithExactSubtotalsAndDetail() {
+        // 2026-11-16 is Monday, 2026-11-22 is Sunday.
+        let week = LedgerStats.weekInterval(containing: exampleDate(2026, 11, 18))!
+        let expenses = [
+            Expense(amountCents: 1234, categoryID: "food", subcategoryID: "food-meal",
+                    date: exampleDate(2026, 11, 16, hour: 9)),
+            Expense(amountCents: 500, categoryID: "transport", date: exampleDate(2026, 11, 18, hour: 10)),
+            Expense(amountCents: 665, categoryID: "food", date: exampleDate(2026, 11, 22, hour: 20)),
+            // Monday 00:00 of the next week (the half-open end) must be excluded.
+            Expense(amountCents: 9999, categoryID: "food", date: exampleDate(2026, 11, 23, hour: 0)),
+        ]
+
+        let groups = LedgerStats.weekCategoryGroups(expenses, in: week)
+        XCTAssertEqual(groups.map(\.categoryID), ["food", "transport"])
+        XCTAssertEqual(groups[0].expenses.count, 2)
+        XCTAssertEqual(groups[0].expenses.first?.amountCents, 1234, "drill-down rows are date-ordered")
+        XCTAssertEqual(LedgerStats.sumCents(groups[0].expenses), 1899)
+        XCTAssertEqual(LedgerStats.sumCents(groups[1].expenses), 500)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, in: week), 2399)
+        XCTAssertEqual(groups.reduce(0) { $0 + (LedgerStats.sumCents($1.expenses) ?? 0) }, 2399,
+                       "category subtotals must add up to the week total")
+    }
+
+    func testWeekBillUsesMondayStartAndHalfOpenSundayBoundary() {
+        let sunday = LedgerStats.calendar.date(
+            from: DateComponents(year: 2026, month: 11, day: 22, hour: 23, minute: 59))!
+        let monday = LedgerStats.calendar.date(
+            from: DateComponents(year: 2026, month: 11, day: 23, hour: 0, minute: 0))!
+        let thisWeek = LedgerStats.weekInterval(containing: sunday)!
+        let nextWeek = LedgerStats.weekInterval(containing: monday)!
+        XCTAssertEqual(LedgerStats.calendar.component(.weekday, from: thisWeek.start), 2)
+
+        let rows = [
+            Expense(amountCents: 100, categoryID: "food", date: sunday),
+            Expense(amountCents: 200, categoryID: "food", date: monday),
+        ]
+        XCTAssertEqual(LedgerStats.weekCategoryGroups(rows, in: thisWeek).first?.expenses.count, 1)
+        XCTAssertEqual(LedgerStats.weekCategoryGroups(rows, in: nextWeek).first?.expenses.first?.amountCents, 200)
+    }
+
+    func testMonthBillGroupsDaysWithDailyDetailAndExactTotal() {
+        let month = LedgerStats.monthInterval(containing: exampleDate(2026, 11, 15))!
+        let expenses = [
+            Expense(amountCents: 1000, categoryID: "food", date: exampleDate(2026, 11, 1, hour: 8)),
+            Expense(amountCents: 2000, categoryID: "transport", date: exampleDate(2026, 11, 1, hour: 18)),
+            Expense(amountCents: 3450, categoryID: "food", date: exampleDate(2026, 11, 30, hour: 12)),
+            // December 1 midnight is outside the November month interval.
+            Expense(amountCents: 9999, categoryID: "food", date: exampleDate(2026, 12, 1, hour: 0)),
+        ]
+
+        let days = LedgerStats.monthDays(expenses, in: month)
+        XCTAssertEqual(days.map(\.dayKey), ["2026-11-01", "2026-11-30"])
+        XCTAssertEqual(days[0].expenses.count, 2)
+        XCTAssertEqual(LedgerStats.sumCents(days[0].expenses), 3000)
+        XCTAssertEqual(LedgerStats.sumCents(days[1].expenses), 3450)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, in: month), 6450)
+    }
+
+    func testYearBillListsTwelveMonthsWithIndependentDetailAndExactTotal() {
+        let year = LedgerStats.yearInterval(containing: exampleDate(2026, 6, 15))!
+        let expenses = [
+            Expense(amountCents: 1100, categoryID: "food", date: exampleDate(2026, 1, 5)),
+            Expense(amountCents: 2200, categoryID: "transport", date: exampleDate(2026, 11, 2)),
+            Expense(amountCents: 3300, categoryID: "food", date: exampleDate(2026, 11, 30)),
+            Expense(amountCents: 4400, categoryID: "food", date: exampleDate(2026, 12, 31)),
+            // Next year must not enter this year's bill.
+            Expense(amountCents: 9999, categoryID: "food", date: exampleDate(2027, 1, 1, hour: 0)),
+        ]
+
+        let months = LedgerStats.yearMonths(expenses, in: year)
+        XCTAssertEqual(months.count, 12)
+        XCTAssertEqual(months.first?.key, "2026-01")
+        XCTAssertEqual(months.last?.key, "2026-12")
+        XCTAssertEqual(months[0].expenses.count, 1)
+        XCTAssertEqual(months[10].days.map(\.dayKey), ["2026-11-02", "2026-11-30"],
+                       "a month's detail is available independently of other months")
+        XCTAssertEqual(LedgerStats.sumCents(months[0].expenses), 1100)
+        XCTAssertEqual(LedgerStats.sumCents(months[10].expenses), 5500)
+        XCTAssertEqual(months.filter { $0.expenses.isEmpty }.count, 9)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, in: year), 11000)
+    }
+
+    func testBillGroupTotalsReportOverflowInsteadOfCappedValue() {
+        let interval = LedgerStats.weekInterval(containing: exampleDate(2026, 11, 18))!
+        let expenses = [
+            Expense(amountCents: Int.max - 1, categoryID: "food", date: exampleDate(2026, 11, 17)),
+            Expense(amountCents: 5, categoryID: "food", date: exampleDate(2026, 11, 18)),
+        ]
+        let group = LedgerStats.weekCategoryGroups(expenses, in: interval).first
+        XCTAssertNil(LedgerStats.sumCents(group?.expenses ?? []))
+        XCTAssertNil(LedgerStats.totalCents(expenses, in: interval))
+    }
 }
 
 private enum TestLegacyRemovalError: Error { case failed }
