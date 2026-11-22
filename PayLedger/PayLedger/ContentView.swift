@@ -2,7 +2,9 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var store: LedgerStore
+    @ObservedObject var categoryStore: CategoryStore
     @State private var isPresentingEntry = false
+    @State private var isManagingCategories = false
     #if DEBUG
     @State private var clockTick = 0
     #endif
@@ -48,7 +50,14 @@ struct ContentView: View {
                     } else {
                         ForEach(store.expenses) { expense in
                             HStack {
-                                Text(ExpenseCategory.displayName(for: expense.categoryID))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(categoryStore.primaryName(for: expense.categoryID))
+                                    if let sub = categoryStore.subcategoryName(
+                                        primaryID: expense.categoryID,
+                                        subcategoryID: expense.subcategoryID) {
+                                        Text(sub).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
                                 Spacer()
                                 Text(Currency.format(expense.amountCents))
                                     .foregroundStyle(.green)
@@ -71,6 +80,9 @@ struct ContentView: View {
             }
             .navigationTitle("随手记")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("分类") { isManagingCategories = true }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { isPresentingEntry = true } label: { Image(systemName: "plus") }
                         .disabled(paused)
@@ -86,7 +98,10 @@ struct ContentView: View {
                 .padding()
             }
             .sheet(isPresented: $isPresentingEntry) {
-                ExpenseEntryView(store: store)
+                ExpenseEntryView(store: store, categoryStore: categoryStore)
+            }
+            .sheet(isPresented: $isManagingCategories) {
+                CategoryManagementView(store: categoryStore)
             }
         }
     }

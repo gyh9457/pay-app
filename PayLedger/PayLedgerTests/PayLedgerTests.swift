@@ -2044,6 +2044,308 @@ final class PayLedgerTests: XCTestCase {
         XCTAssertEqual(after.expenses.map(\.amountCents).sorted(), [500, 1234, 8765],
                        "each example expense counted exactly once")
     }
+
+    // MARK: - Issue 02: two-level categories and maintenance
+
+    private func exampleCategoryURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("categories-\(UUID().uuidString).json")
+    }
+
+    // MARK: - Codex 09:08 规范 2: category path derives from the validated test ledger
+
+    func testCategoryTestFileURLDerivesFromValidatedLedgerPath() {
+        let environment = ["PAYLEDGER_TEST_LEDGER": "uitest-example.json"]
+        let ledgerURL = PayLedgerApp.ledgerFileURL(environment: environment)
+        let categoryURL = CategoryStore.testFileURL(environment: environment)
+
+        XCTAssertNotNil(ledgerURL)
+        XCTAssertNotNil(categoryURL)
+        XCTAssertEqual(categoryURL?.lastPathComponent, "categories-uitest-example.json")
+        XCTAssertEqual(categoryURL?.deletingLastPathComponent(),
+                       ledgerURL?.deletingLastPathComponent(),
+                       "the category file must live beside the isolated example ledger")
+        XCTAssertNotEqual(categoryURL, ledgerURL,
+                          "the category file must be independent of the ledger file")
+        XCTAssertNotEqual(categoryURL, CategoryStore.defaultFileURL)
+    }
+
+    func testCategoryTestFileURLStaysIsolatedForInvalidOrMissingLedgerName() {
+        let testDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PayLedgerUITests", isDirectory: true)
+
+        // Invalid names and test overrides without a ledger name must not
+        // escape the isolated directory or fall through to the production path.
+        for environment in [
+            ["PAYLEDGER_TEST_LEDGER": "ledger.json"],
+            ["PAYLEDGER_TEST_LEDGER": "../Documents/ledger.json"],
+            ["PAYLEDGER_TEST_LEDGER": "uitest-a/b.json"],
+            ["PAYLEDGER_TEST_NOW": "2026-11-17T10:00:00"],
+            ["PAYLEDGER_TEST_STATE": "recovered"]
+        ] {
+            let url = CategoryStore.testFileURL(environment: environment)
+            XCTAssertNotNil(url, "expected an isolated category path for \(environment)")
+            XCTAssertEqual(url?.lastPathComponent, "categories-uitest-invalid-config.json",
+                           "invalid \(environment) must use the validated fallback name")
+            XCTAssertEqual(url?.deletingLastPathComponent(), testDirectory,
+                           "invalid \(environment) must stay inside the isolated directory")
+            XCTAssertNotEqual(url, CategoryStore.defaultFileURL)
+        }
+        XCTAssertNil(CategoryStore.testFileURL(environment: [:]),
+                     "production launches use the on-device category path")
+    }
+
+    func testCategoryTestFileURLPersistsAcrossRestart() throws {
+        let name = "uitest-\(UUID().uuidString).json"
+        let environment = ["PAYLEDGER_TEST_LEDGER": name]
+        let categoryURL = try XCTUnwrap(CategoryStore.testFileURL(environment: environment))
+        defer { try? FileManager.default.removeItem(at: categoryURL) }
+
+        let first = CategoryStore(fileURL: categoryURL)
+        try first.addPrimary(name: "购物示例")
+        let primaryID = try XCTUnwrap(first.groups.last?.id)
+        try first.addSubcategory(primaryID: primaryID, name: "日用示例")
+
+        let reopened = CategoryStore(fileURL: categoryURL)
+        XCTAssertEqual(reopened.primaryName(for: primaryID), "购物示例")
+        XCTAssertEqual(reopened.subcategories(in: primaryID).map(\.name), ["日用示例"])
+    }
+
+    /// Codex 10:57 规范: the old `\(stem)-categories.json` derivation produced a
+    /// name that the ledger-name validator also accepts. Two legal example
+    /// names could then cross-read each other's category/ledger JSON.
+    func testCategoryAndLedgerExamplePathsAreMutuallyIndependent() throws {
+        let token = UUID().uuidString
+        let firstName = "uitest-\(token)-a.json"
+        // Exactly the name the old derivation produced for the first example's
+        // category file — and a valid ledger name in its own right.
+        let secondName = "uitest-\(token)-a-categories.json"
+        let firstEnv = ["PAYLEDGER_TEST_LEDGER": firstName]
+        let secondEnv = ["PAYLEDGER_TEST_LEDGER": secondName]
+
+        let firstLedger = try XCTUnwrap(PayLedgerApp.ledgerFileURL(environment: firstEnv))
+        let firstCategories = try XCTUnwrap(CategoryStore.testFileURL(environment: firstEnv))
+        let secondLedger = try XCTUnwrap(PayLedgerApp.ledgerFileURL(environment: secondEnv))
+        let secondCategories = try XCTUnwrap(CategoryStore.testFileURL(environment: secondEnv))
+        let allPaths = [firstLedger, firstCategories, secondLedger, secondCategories]
+        defer { allPaths.forEach { try? FileManager.default.removeItem(at: $0) } }
+
+        XCTAssertEqual(Set(allPaths.map(\.path)).count, 4,
+                       "ledger and category files for both examples must be four distinct paths")
+
+        // A category filename must never itself be acceptable as a ledger name.
+        for categories in [firstCategories, secondCategories] {
+            let resolved = PayLedgerApp.ledgerFileURL(
+                environment: ["PAYLEDGER_TEST_LEDGER": categories.lastPathComponent])
+            XCTAssertNotEqual(resolved?.lastPathComponent, categories.lastPathComponent,
+                              "\(categories.lastPathComponent) must be rejected by the ledger-name validator")
+        }
+
+        // Add a category in the first example, then an expense in the second.
+        let firstCategoryStore = CategoryStore(fileURL: firstCategories)
+        try firstCategoryStore.addPrimary(name: "示例一组")
+        let firstPrimaryID = try XCTUnwrap(firstCategoryStore.groups.last?.id)
+
+        let secondLedgerStore = LedgerStore(fileURL: secondLedger)
+        try secondLedgerStore.addExpense(amountCents: 1234, categoryID: "food")
+
+        // Reopen both: neither example sees the other's data.
+        let reopenedFirstCategories = CategoryStore(fileURL: firstCategories)
+        XCTAssertEqual(reopenedFirstCategories.primaryName(for: firstPrimaryID), "示例一组")
+        let reopenedFirstLedger = LedgerStore(fileURL: firstLedger)
+        XCTAssertTrue(reopenedFirstLedger.expenses.isEmpty)
+
+        let reopenedSecondCategories = CategoryStore(fileURL: secondCategories)
+        XCTAssertFalse(reopenedSecondCategories.groups.contains { $0.name == "示例一组" })
+        let reopenedSecondLedger = LedgerStore(fileURL: secondLedger)
+        XCTAssertEqual(reopenedSecondLedger.expenses.map(\.amountCents), [1234])
+    }
+
+    func testCategoryStoreDefaultsAndLookup() throws {
+        let store = CategoryStore(fileURL: exampleCategoryURL())
+        XCTAssertEqual(store.groups.count, 2)
+        XCTAssertEqual(store.primaryName(for: "food"), "食品酒水")
+        XCTAssertEqual(store.primaryName(for: "transport"), "交通")
+        // Unknown ids fall back to the legacy mapping instead of showing a raw id.
+        XCTAssertEqual(store.primaryName(for: "unknown"), "unknown")
+        XCTAssertEqual(store.subcategories(in: "food").map(\.name), ["早午晚餐", "零食饮料"])
+        XCTAssertEqual(
+            store.subcategoryName(primaryID: "food", subcategoryID: "food-meal"), "早午晚餐")
+    }
+
+    func testReconciledSubcategoryKeepsValidChoiceAndSelectsFirstOtherwise() throws {
+        let url = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = CategoryStore(fileURL: url)
+
+        // A child that still belongs to the primary is preserved.
+        XCTAssertEqual(
+            store.reconciledSubcategoryID(primaryID: "food", current: "food-snack"),
+            "food-snack")
+        // Switching to another primary resets to that primary's first child.
+        XCTAssertEqual(
+            store.reconciledSubcategoryID(primaryID: "transport", current: "food-snack"),
+            "transport-bus")
+        // A primary without children has no subcategory to select.
+        try store.addPrimary(name: "购物")
+        let emptyID = try XCTUnwrap(store.groups.last?.id)
+        XCTAssertNil(store.reconciledSubcategoryID(primaryID: emptyID, current: "food-snack"))
+        // Adding the first child makes it the selection when none was held.
+        try store.addSubcategory(primaryID: emptyID, name: "日用品")
+        let addedID = try XCTUnwrap(store.subcategories(in: emptyID).first?.id)
+        XCTAssertEqual(store.reconciledSubcategoryID(primaryID: emptyID, current: nil), addedID)
+        // A still-valid choice is not overwritten by the newly added sibling.
+        XCTAssertEqual(
+            store.reconciledSubcategoryID(primaryID: emptyID, current: addedID), addedID)
+    }
+
+    func testRenamePrimaryKeepsHistoricalAmountAndDateAndShowsNewName() throws {
+        let ledgerURL = fileURL!
+        let categoryURL = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: categoryURL) }
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let ledger = LedgerStore(fileURL: ledgerURL)
+        try ledger.addExpense(amountCents: 1234, categoryID: "food",
+                              subcategoryID: "food-meal", date: date)
+
+        let categories = CategoryStore(fileURL: categoryURL)
+        XCTAssertEqual(categories.primaryName(for: "food"), "食品酒水")
+        try categories.renamePrimary(id: "food", to: "餐饮")
+        XCTAssertEqual(categories.primaryName(for: "food"), "餐饮")
+
+        // Rename never touches the expense; amount and date stay identical and
+        // the new name is reflected on restart of both stores.
+        let reopenedCategories = CategoryStore(fileURL: categoryURL)
+        XCTAssertEqual(reopenedCategories.primaryName(for: "food"), "餐饮")
+        let reopenedLedger = LedgerStore(fileURL: ledgerURL)
+        XCTAssertEqual(reopenedLedger.expenses.count, 1)
+        XCTAssertEqual(reopenedLedger.expenses.first?.amountCents, 1234)
+        XCTAssertEqual(reopenedLedger.expenses.first?.date, date)
+        XCTAssertEqual(reopenedLedger.expenses.first?.subcategoryID, "food-meal")
+    }
+
+    func testAddAndRenameSubcategoryPersistAcrossRestart() throws {
+        let categoryURL = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: categoryURL) }
+        let store = CategoryStore(fileURL: categoryURL)
+        try store.addSubcategory(primaryID: "food", name: "夜宵")
+        let addedID = try XCTUnwrap(store.subcategories(in: "food").last?.id)
+        XCTAssertEqual(store.subcategoryName(primaryID: "food", subcategoryID: addedID), "夜宵")
+
+        try store.renameSubcategory(primaryID: "food", subcategoryID: addedID, to: "深夜食堂")
+        let reopened = CategoryStore(fileURL: categoryURL)
+        XCTAssertEqual(reopened.subcategoryName(primaryID: "food", subcategoryID: addedID), "深夜食堂")
+        // Renaming a subcategory does not disturb its siblings.
+        XCTAssertEqual(reopened.subcategories(in: "food").map(\.name),
+                       ["早午晚餐", "零食饮料", "深夜食堂"])
+    }
+
+    func testAddPrimaryPersistsAcrossRestart() throws {
+        let categoryURL = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: categoryURL) }
+        let store = CategoryStore(fileURL: categoryURL)
+        try store.addPrimary(name: "居家生活")
+        let addedID = try XCTUnwrap(store.groups.last?.id)
+        XCTAssertEqual(store.primaryName(for: addedID), "居家生活")
+        let reopened = CategoryStore(fileURL: categoryURL)
+        XCTAssertEqual(reopened.primaryName(for: addedID), "居家生活")
+        XCTAssertEqual(reopened.groups.count, 3)
+    }
+
+    func testLegacyExpenseWithoutSubcategoryStillDecodes() throws {
+        // A record written before issue 02 has no subcategoryID key. Swift's
+        // synthesized decoder must fill nil so old ledgers keep working.
+        let legacyJSON = """
+        [{"id":"00000000-0000-0000-0000-000000000001","amountCents":1234,\
+        "categoryID":"food","date":1700419200}]
+        """
+        try Data(legacyJSON.utf8).write(to: fileURL)
+        let store = LedgerStore(fileURL: fileURL)
+        XCTAssertEqual(store.expenses.count, 1)
+        XCTAssertEqual(store.expenses.first?.amountCents, 1234)
+        XCTAssertNil(store.expenses.first?.subcategoryID)
+        XCTAssertEqual(store.expenses.first?.categoryID, "food")
+    }
+
+    // MARK: - Issue 02, Codex 09:08 规范 1: protected category persistence
+
+    func testCategoryBackupExclusionFailureKeepsOriginalFileMemoryAndRestart() throws {
+        let url = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let seed = CategoryStore(fileURL: url)
+        try seed.renamePrimary(id: "food", to: "餐饮")
+        let original = try Data(contentsOf: url)
+        let originalNames = seed.groups.map(\.name)
+
+        let refusing: (URL) throws -> Void = { _ in throw LedgerStoreError.backupExclusionFailed }
+        let store = CategoryStore(fileURL: url, backupExclusion: refusing)
+        XCTAssertThrowsError(try store.addPrimary(name: "购物")) { error in
+            guard case LedgerStoreError.backupExclusionFailed = error else {
+                return XCTFail("expected backupExclusionFailed, got \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: url), original, "live category file must stay untouched")
+        XCTAssertEqual(store.groups.map(\.name), originalNames, "memory stays at the original tree")
+        let reopened = CategoryStore(fileURL: url)
+        XCTAssertEqual(reopened.primaryName(for: "food"), "餐饮", "restart reads original categories")
+    }
+
+    func testCategoryExclusionVerificationFailureBlocksPublish() throws {
+        let url = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let seed = CategoryStore(fileURL: url)
+        try seed.renamePrimary(id: "food", to: "餐饮")
+        let original = try Data(contentsOf: url)
+
+        // The override succeeds but never sets the marker, so the mandatory
+        // readback sees false. A swallowed false used to publish over the file.
+        let store = CategoryStore(fileURL: url, backupExclusion: { _ in })
+        XCTAssertThrowsError(try store.addPrimary(name: "购物")) { error in
+            guard case LedgerStoreError.backupExclusionFailed = error else {
+                return XCTFail("expected backupExclusionFailed on false readback, got \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: url), original)
+        XCTAssertFalse(store.groups.contains { $0.name == "购物" })
+    }
+
+    func testCategoryPublishFailureKeepsOriginalFileMemoryAndRestart() throws {
+        let url = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let seed = CategoryStore(fileURL: url)
+        try seed.renamePrimary(id: "food", to: "餐饮")
+        let original = try Data(contentsOf: url)
+
+        let store = CategoryStore(fileURL: url, finalPublishFailure: { TestFinalPublishError.failed })
+        XCTAssertThrowsError(try store.addSubcategory(primaryID: "food", name: "夜宵"))
+        XCTAssertEqual(try Data(contentsOf: url), original, "failed publish leaves the live file intact")
+        XCTAssertFalse(store.groups.contains { $0.subcategories.contains { $0.name == "夜宵" } })
+        let reopened = CategoryStore(fileURL: url)
+        XCTAssertEqual(reopened.primaryName(for: "food"), "餐饮")
+    }
+
+    func testUnreadableCategoryFileIsPreservedAndBlocksOverwrite() throws {
+        let url = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let corrupt = Data("not a category tree".utf8)
+        try corrupt.write(to: url)
+
+        let store = CategoryStore(fileURL: url)
+        XCTAssertTrue(store.isUnreadable, "an undecodable file must surface as unreadable")
+        XCTAssertThrowsError(try store.addPrimary(name: "购物"))
+        XCTAssertEqual(try Data(contentsOf: url), corrupt, "corrupt bytes stay byte-for-byte")
+        let reopened = CategoryStore(fileURL: url)
+        XCTAssertTrue(reopened.isUnreadable)
+        XCTAssertEqual(try Data(contentsOf: url), corrupt)
+
+        // A path that cannot be inspected is equally unwritable.
+        let unreadable = CategoryStore(fileURL: url, readCategoriesFile: { _ in
+            throw NSError(domain: "test", code: 5)
+        })
+        XCTAssertTrue(unreadable.isUnreadable)
+        XCTAssertThrowsError(try unreadable.renamePrimary(id: "food", to: "餐饮"))
+        XCTAssertEqual(try Data(contentsOf: url), corrupt)
+    }
 }
 
 private enum TestLegacyRemovalError: Error { case failed }

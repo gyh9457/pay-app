@@ -33,6 +33,9 @@ enum LedgerStoreError: Error, LocalizedError {
     /// A staged ledger did not byte-match the encoded data before commit.
     case writeVerificationFailed
     case writeFailed(underlying: Error)
+    /// A category file exists but cannot be read or decoded. The original is
+    /// preserved and writes are blocked so defaults never overwrite it.
+    case unreadableCategories
     /// Data integrity is not confirmed, so accounting is paused until reopen.
     case recoveryRequired
 
@@ -50,6 +53,8 @@ enum LedgerStoreError: Error, LocalizedError {
             return "保存校验失败，本次未保存。"
         case .writeFailed(let underlying):
             return "保存失败：\(underlying.localizedDescription)"
+        case .unreadableCategories:
+            return "分类文件无法读取，已保留原文件且不会覆盖，请联系维护。"
         case .recoveryRequired:
             return "账本暂需恢复，记账已暂停。请重新打开应用重试。"
         }
@@ -183,13 +188,15 @@ final class LedgerStore: ObservableObject {
     /// Commits a new expense with a single atomic replacement. All fallible
     /// work happens in `commit`, so any failure leaves the real ledger
     /// byte-for-byte untouched and memory unmodified.
-    func addExpense(amountCents: Int, categoryID: String, date: Date = Date()) throws {
+    func addExpense(amountCents: Int, categoryID: String, subcategoryID: String? = nil,
+                    date: Date = Date()) throws {
         guard amountCents > 0 else { return }
         guard !migrationPending else { throw LedgerStoreError.migrationPending }
         guard readiness != .needsRecovery else { throw LedgerStoreError.recoveryRequired }
         guard !isLedgerUnreadable else { throw LedgerStoreError.unreadableLedger }
 
-        let updated = expenses + [Expense(amountCents: amountCents, categoryID: categoryID, date: date)]
+        let updated = expenses + [Expense(amountCents: amountCents, categoryID: categoryID,
+                                          subcategoryID: subcategoryID, date: date)]
         try commit(updated)
         expenses = updated
     }
@@ -620,6 +627,238 @@ final class LedgerStore: ObservableObject {
             try removeLegacyFile(url)
         } else {
             try FileManager.default.removeItem(at: url)
+        }
+    }
+}
+
+/// Owns the user-editable two-level category tree and persists it on-device
+/// alongside the ledger. Category ids are stable: renaming only changes the
+/// display name, so historical expenses keep their date and amount and show
+/// the current name. Like the ledger, the file is excluded from backup.
+final class CategoryStore: ObservableObject {
+    @Published private(set) var groups: [ExpenseCategoryGroup]
+    /// True when the category file exists but cannot be read or decoded.
+    /// The original bytes are preserved and every write is blocked so a
+    /// damaged tree can never be silently replaced by defaults.
+    @Published private(set) var isUnreadable = false
+
+    private let fileURL: URL
+    /// Test-only seam: replaces the backup-exclusion enforcer so tests can
+    /// simulate the platform refusing the marker or a readback that is false.
+    /// Production never passes one.
+    private let backupExclusionOverride: ((URL) throws -> Void)?
+    /// Test-only seam: injects a failure into the final atomic publish before
+    /// it becomes visible. Production never passes one.
+    private let finalPublishFailure: (() -> Error?)?
+    /// Test-only seam: replaces category reads so tests can simulate a path
+    /// that cannot be inspected without relying on host permissions.
+    private let readCategoriesFile: ((URL) throws -> Data)?
+
+    static var defaultFileURL: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return support.appendingPathComponent("PayLedger", isDirectory: true)
+            .appendingPathComponent("categories.json")
+    }
+
+    /// DEBUG-only isolated path derived from the validated test ledger URL so
+    /// each UI test gets its own tree while a restart with the same ledger
+    /// reuses it. Reusing `PayLedgerApp.ledgerFileURL` means the same name
+    /// validation applies: an invalid or missing test name cannot escape the
+    /// isolated directory or resolve to the production category tree.
+    ///
+    /// The category filename is deliberately prefixed with `categories-`
+    /// instead of suffixed with `-categories`: the ledger validator accepts
+    /// any bare `uitest-<safe>.json`, so `uitest-x-categories.json` would itself
+    /// be a valid ledger name and two example names could cross-read each
+    /// other's category/ledger JSON. The `categories-` prefix is never
+    /// accepted as a ledger name.
+    static func testFileURL(environment: [String: String]) -> URL? {
+        #if DEBUG
+        guard let ledgerURL = PayLedgerApp.ledgerFileURL(environment: environment) else { return nil }
+        let stem = ledgerURL.deletingPathExtension().lastPathComponent
+        return ledgerURL.deletingLastPathComponent()
+            .appendingPathComponent("categories-\(stem).json")
+        #else
+        return nil
+        #endif
+    }
+
+    init(fileURL: URL? = nil,
+         backupExclusion: ((URL) throws -> Void)? = nil,
+         finalPublishFailure: (() -> Error?)? = nil,
+         readCategoriesFile: ((URL) throws -> Data)? = nil) {
+        self.fileURL = fileURL ?? Self.defaultFileURL
+        self.backupExclusionOverride = backupExclusion
+        self.finalPublishFailure = finalPublishFailure
+        self.readCategoriesFile = readCategoriesFile
+        // Defaults are held in memory only until a first edit on a genuinely
+        // missing file publishes them. An existing unreadable file is never
+        // replaced by this in-memory tree.
+        self.groups = ExpenseCategories.defaults
+        self.isUnreadable = false
+
+        let fm = FileManager.default
+        let directory = self.fileURL.deletingLastPathComponent()
+        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Protect the directory first: a staged save is created here, so a
+        // directory that cannot be protected must be fixed before publishing.
+        try? applyBackupExclusion(to: directory)
+
+        let data: Data
+        do {
+            data = try readCategoriesData(at: self.fileURL)
+        } catch {
+            // Only a definite "no such file" is a first run. Any other read
+            // failure leaves a possible live file unconfirmed, so writes block.
+            if Self.isMissingFileError(error) { return }
+            self.isUnreadable = true
+            return
+        }
+        do {
+            self.groups = try JSONDecoder().decode([ExpenseCategoryGroup].self, from: data)
+        } catch {
+            // Keep the original bytes untouched and surface the damage.
+            self.isUnreadable = true
+            return
+        }
+        try? applyBackupExclusion(to: self.fileURL)
+    }
+
+    private func readCategoriesData(at url: URL) throws -> Data {
+        if let readCategoriesFile { return try readCategoriesFile(url) }
+        return try Data(contentsOf: url)
+    }
+
+    /// Only a definite "no such file" is a genuine first run; permission and
+    /// other read failures must never be mistaken for an absent file.
+    private static func isMissingFileError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return (nsError.domain == NSCocoaErrorDomain &&
+                (nsError.code == CocoaError.Code.fileNoSuchFile.rawValue ||
+                 nsError.code == CocoaError.Code.fileReadNoSuchFile.rawValue)) ||
+               (nsError.domain == NSPOSIXErrorDomain && nsError.code == ENOENT)
+    }
+
+    /// Primary name shown on ledger rows. Falls back to the legacy mapping
+    /// for ids created before the category tree existed.
+    func primaryName(for id: String) -> String {
+        groups.first { $0.id == id }?.name ?? ExpenseCategory.displayName(for: id)
+    }
+
+    func subcategories(in primaryID: String) -> [ExpenseSubcategory] {
+        groups.first { $0.id == primaryID }?.subcategories ?? []
+    }
+
+    func subcategoryName(primaryID: String, subcategoryID: String?) -> String? {
+        guard let subcategoryID else { return nil }
+        return subcategories(in: primaryID).first { $0.id == subcategoryID }?.name
+    }
+
+    /// Keeps a subcategory selection only while it still belongs to the
+    /// current primary; otherwise selects that primary's first child (nil
+    /// when it has none). Used when switching primaries or when the tree is
+    /// edited while the entry form is open.
+    func reconciledSubcategoryID(primaryID: String, current: String?) -> String? {
+        let valid = subcategories(in: primaryID).map(\.id)
+        if let current, valid.contains(current) { return current }
+        return valid.first
+    }
+
+    func addPrimary(name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var updated = groups
+        updated.append(ExpenseCategoryGroup(id: Self.newID(prefix: "cat"),
+                                            name: trimmed, subcategories: []))
+        try persistAndPublish(updated)
+    }
+
+    func renamePrimary(id: String, to name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var updated = groups
+        guard let index = updated.firstIndex(where: { $0.id == id }) else { return }
+        updated[index].name = trimmed
+        try persistAndPublish(updated)
+    }
+
+    func addSubcategory(primaryID: String, name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var updated = groups
+        guard let index = updated.firstIndex(where: { $0.id == primaryID }) else { return }
+        updated[index].subcategories.append(
+            ExpenseSubcategory(id: Self.newID(prefix: "sub"), name: trimmed))
+        try persistAndPublish(updated)
+    }
+
+    func renameSubcategory(primaryID: String, subcategoryID: String, to name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var updated = groups
+        guard let primaryIndex = updated.firstIndex(where: { $0.id == primaryID }),
+              let subIndex = updated[primaryIndex].subcategories.firstIndex(where: { $0.id == subcategoryID })
+        else { return }
+        updated[primaryIndex].subcategories[subIndex].name = trimmed
+        try persistAndPublish(updated)
+    }
+
+    private func persistAndPublish(_ updated: [ExpenseCategoryGroup]) throws {
+        try persist(updated)
+        groups = updated
+    }
+
+    private func persist(_ groups: [ExpenseCategoryGroup]) throws {
+        guard !isUnreadable else { throw LedgerStoreError.unreadableCategories }
+        let data = try JSONEncoder().encode(groups)
+        let directory = fileURL.deletingLastPathComponent()
+        let staging = directory.appendingPathComponent(Self.stagingFileName)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        do {
+            // Every fallible step runs on the staging file; the live tree is
+            // untouched until the single atomic publish, so a failed
+            // protection or write check never leaves disk and memory disagreed.
+            try applyBackupExclusion(to: directory)
+            try data.write(to: staging, options: .atomic)
+            try applyBackupExclusion(to: staging)
+            guard try Data(contentsOf: staging) == data else {
+                throw LedgerStoreError.writeVerificationFailed
+            }
+            if let finalPublishFailure, let failure = finalPublishFailure() {
+                throw failure
+            }
+            guard rename(staging.path, fileURL.path) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: nil)
+            }
+        } catch {
+            if let storeError = error as? LedgerStoreError { throw storeError }
+            throw LedgerStoreError.writeFailed(underlying: error)
+        }
+    }
+
+    private static var stagingFileName: String {
+        ".categories-staging-\(UUID().uuidString).tmp"
+    }
+
+    private static func newID(prefix: String) -> String {
+        "\(prefix)-\(UUID().uuidString)"
+    }
+
+    /// Sets (and verifies) the backup-exclusion marker, throwing when the
+    /// platform refuses it or a readback comes back false. A swallowed false
+    /// used to report success while leaving the live file unprotected.
+    private func applyBackupExclusion(to url: URL) throws {
+        if let backupExclusionOverride {
+            try backupExclusionOverride(url)
+        } else {
+            var excluded = URLResourceValues()
+            excluded.isExcludedFromBackup = true
+            var mutableURL = url
+            try mutableURL.setResourceValues(excluded)
+        }
+        let actual = try url.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        guard actual.isExcludedFromBackup == true else {
+            throw LedgerStoreError.backupExclusionFailed
         }
     }
 }

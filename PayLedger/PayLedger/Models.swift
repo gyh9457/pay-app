@@ -5,13 +5,20 @@ import Foundation
 struct Expense: Identifiable, Codable, Equatable {
     let id: UUID
     let amountCents: Int
+    /// Stable primary-category id. Kept as the legacy id ("food"/"transport")
+    /// so expenses saved before category maintenance existed still resolve.
     let categoryID: String
+    /// Optional leaf id selected on the two-level wheel. Absent on records
+    /// created before issue 02; Swift's synthesized decoder fills nil.
+    let subcategoryID: String?
     let date: Date
 
-    init(id: UUID = UUID(), amountCents: Int, categoryID: String, date: Date) {
+    init(id: UUID = UUID(), amountCents: Int, categoryID: String,
+         subcategoryID: String? = nil, date: Date) {
         self.id = id
         self.amountCents = amountCents
         self.categoryID = categoryID
+        self.subcategoryID = subcategoryID
         self.date = date
     }
 }
@@ -98,8 +105,8 @@ enum Currency {
     }
 }
 
-/// Maps the example category identifiers used by the entry form to the
-/// names shown in the ledger list. Full category maintenance is issue 02.
+/// Legacy display names for category ids saved before the editable category
+/// tree existed. The category store falls back to this for unknown ids.
 enum ExpenseCategory {
     static func displayName(for id: String) -> String {
         switch id {
@@ -108,4 +115,35 @@ enum ExpenseCategory {
         default: return id
         }
     }
+}
+
+/// A user-editable leaf category. `id` is stable so renaming `name` never
+/// orphans expenses that reference it.
+struct ExpenseSubcategory: Identifiable, Codable, Equatable {
+    let id: String
+    var name: String
+}
+
+/// A user-editable primary category with its ordered subcategories.
+struct ExpenseCategoryGroup: Identifiable, Codable, Equatable {
+    let id: String
+    var name: String
+    var subcategories: [ExpenseSubcategory]
+}
+
+/// Built-in example categories for development and demo. The two-level
+/// example "食品酒水 → 早午晚餐" comes from the original requirement; exact
+/// order/detail still needs the (currently unavailable) screen recording.
+/// Primary ids reuse the legacy ids so pre-existing expenses keep their name.
+enum ExpenseCategories {
+    static let defaults: [ExpenseCategoryGroup] = [
+        ExpenseCategoryGroup(id: "food", name: "食品酒水", subcategories: [
+            ExpenseSubcategory(id: "food-meal", name: "早午晚餐"),
+            ExpenseSubcategory(id: "food-snack", name: "零食饮料"),
+        ]),
+        ExpenseCategoryGroup(id: "transport", name: "交通", subcategories: [
+            ExpenseSubcategory(id: "transport-bus", name: "公交地铁"),
+            ExpenseSubcategory(id: "transport-taxi", name: "打车"),
+        ]),
+    ]
 }

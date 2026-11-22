@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct PayLedgerApp: App {
     @StateObject private var store: LedgerStore
+    @StateObject private var categoryStore: CategoryStore
 
     init() {
         let environment = ProcessInfo.processInfo.environment
@@ -17,6 +18,18 @@ struct PayLedgerApp: App {
             environment: environment,
             productionFileURL: LedgerStore.defaultFileURL,
             legacyFileURL: LedgerStore.legacyDefaultFileURL))
+        _categoryStore = StateObject(wrappedValue: Self.makeCategoryStore(environment: environment))
+    }
+
+    /// Resolves the category tree. Test launches get an isolated example file
+    /// derived from the test ledger name; production uses the on-device path.
+    private static func makeCategoryStore(environment: [String: String]) -> CategoryStore {
+        #if DEBUG
+        if let injected = CategoryStore.testFileURL(environment: environment) {
+            return CategoryStore(fileURL: injected)
+        }
+        #endif
+        return CategoryStore()
     }
 
     /// The single ledger factory used by the real app entry and by entry-level
@@ -133,7 +146,7 @@ struct PayLedgerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(store: store)
+            ContentView(store: store, categoryStore: categoryStore)
         }
     }
 }

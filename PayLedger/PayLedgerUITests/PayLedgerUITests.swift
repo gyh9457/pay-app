@@ -193,6 +193,223 @@ final class PayLedgerUITests: XCTestCase {
         assertSummaries(show: "12.34", in: app)
     }
 
+    /// 规格 1：点「分类」从底部展开双列滚轮，选择时表单同步，切换大类时
+    /// 右列切到对应首个子类；点「完成」收起后金额和所选分类都保留，保存
+    /// 回首页显示正确的逐笔金额与分类。
+    func testCategoryWheelCollapsesOnDoneAndKeepsAmountAndSelection() {
+        let ledger = "uitest-\(UUID().uuidString).json"
+        let app = XCUIApplication()
+        app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": ledger]
+        app.launch()
+
+        app.buttons["记一笔"].tap()
+        let amountField = app.textFields["0.00"]
+        XCTAssertTrue(amountField.waitForExistence(timeout: 5))
+        amountField.tap()
+        amountField.typeText("31.20")
+
+        XCTAssertFalse(app.pickers["primaryCategoryPicker"].exists, "滚轮初始应收起")
+        XCTAssertFalse(app.pickers["subcategoryPicker"].exists, "子类滚轮初始应收起")
+        app.buttons["chooseCategory"].tap()
+
+        let primaryWheel = app.pickers["primaryCategoryPicker"]
+        let subWheel = app.pickers["subcategoryPicker"]
+        XCTAssertTrue(primaryWheel.waitForExistence(timeout: 5), "点分类后应展开一级滚轮")
+        XCTAssertTrue(subWheel.waitForExistence(timeout: 5), "点分类后应展开子类滚轮")
+        XCTAssertTrue(app.staticTexts["食品酒水 · 早午晚餐"].waitForExistence(timeout: 5),
+                      "默认选择应在表单同步显示")
+
+        subWheel.pickerWheels.element.adjust(toPickerWheelValue: "零食饮料")
+        XCTAssertTrue(app.staticTexts["食品酒水 · 零食饮料"].waitForExistence(timeout: 5),
+                      "选子类后表单应同步显示")
+        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "交通")
+        XCTAssertTrue(app.staticTexts["交通 · 公交地铁"].waitForExistence(timeout: 5),
+                      "切换大类后右列应切到对应首个子类")
+
+        app.buttons["doneCategoryWheel"].tap()
+        XCTAssertFalse(app.pickers["primaryCategoryPicker"].exists, "完成后滚轮应收起")
+        XCTAssertTrue(app.staticTexts["交通 · 公交地铁"].exists, "收起后保留所选分类")
+        XCTAssertEqual(amountField.value as? String, "31.20", "收起后保留已输入金额")
+
+        app.buttons["保存"].tap()
+        assertPersistedRow(category: "交通", amount: "31.20", in: app)
+        assertPersistedRow(category: "公交地铁", amount: "31.20", in: app)
+    }
+
+    /// The two-column wheel selects a primary and a subcategory; changing the
+    /// primary refreshes the subcategory column. A rename keeps historical
+    /// rows and their amounts, and both survive a restart.
+    func testTwoLevelWheelSelectionAndCategoryRenamePersist() {
+        let ledger = "uitest-\(UUID().uuidString).json"
+        let app = XCUIApplication()
+        app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": ledger]
+        app.launch()
+
+        app.buttons["记一笔"].tap()
+        let choose = app.buttons["chooseCategory"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.pickers["primaryCategoryPicker"].exists, "滚轮初始应收起")
+        choose.tap()
+
+        let primaryWheel = app.pickers["primaryCategoryPicker"]
+        let subWheel = app.pickers["subcategoryPicker"]
+        XCTAssertTrue(primaryWheel.waitForExistence(timeout: 5), "缺少一级分类滚轮")
+        XCTAssertTrue(subWheel.waitForExistence(timeout: 5), "缺少子类滚轮")
+
+        // Selecting a subcategory updates the synced label immediately.
+        subWheel.pickerWheels.element.adjust(toPickerWheelValue: "零食饮料")
+        XCTAssertTrue(app.staticTexts["食品酒水 · 零食饮料"].waitForExistence(timeout: 5),
+                      "选择子类后表单应同步显示食品酒水 · 零食饮料")
+
+        // Changing the primary refreshes the subcategory column to that
+        // primary's children and resets the synced label.
+        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "交通")
+        XCTAssertTrue(app.staticTexts["交通 · 公交地铁"].waitForExistence(timeout: 5),
+                      "切换大类后子类应刷新为交通的子类")
+        app.buttons["doneCategoryWheel"].tap()
+        XCTAssertFalse(app.pickers["primaryCategoryPicker"].exists, "点完成后应回到收起状态")
+
+        // The form is already open; enter the amount and save from here.
+        let amountField = app.textFields["0.00"]
+        XCTAssertTrue(amountField.waitForExistence(timeout: 5))
+        amountField.tap()
+        amountField.typeText("23.45")
+        app.buttons["保存"].tap()
+        assertPersistedRow(category: "交通", amount: "23.45", in: app)
+        assertPersistedRow(category: "公交地铁", amount: "23.45", in: app)
+
+        // Rename the primary from the management screen. The historical row
+        // keeps its amount and shows the new name, before and after restart.
+        app.buttons["分类"].tap()
+        let rename = app.buttons["renamePrimary-transport"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 5))
+        rename.tap()
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5), "改名应弹出输入框")
+        let field = app.alerts.firstMatch.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("出行")
+        app.buttons["保存"].tap()
+        app.buttons["完成"].tap()
+        assertPersistedRow(category: "出行", amount: "23.45", in: app)
+        assertPersistedRow(category: "公交地铁", amount: "23.45", in: app)
+
+        app.terminate()
+        app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": ledger]
+        app.launch()
+        assertPersistedRow(category: "出行", amount: "23.45", in: app)
+    }
+
+    /// 规格 2：没有子类的大类在右列显示「无子类」，表单同步只显示大类，
+    /// 保存按该大类入账且不写子类标识。全程示例金额与示例分类。
+    func testPrimaryWithoutSubcategoryShowsPlaceholderAndSaves() {
+        let ledger = "uitest-\(UUID().uuidString).json"
+        let app = XCUIApplication()
+        app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": ledger]
+        app.launch()
+
+        // 从首页「分类」新增一个没有子类的大类。
+        app.buttons["分类"].tap()
+        app.buttons["addPrimary"].tap()
+        let nameField = app.alerts.firstMatch.textFields.firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5))
+        nameField.tap()
+        nameField.typeText("购物")
+        app.buttons["保存"].tap()
+        app.buttons["完成"].tap()
+
+        app.buttons["记一笔"].tap()
+        let amountField = app.textFields["0.00"]
+        XCTAssertTrue(amountField.waitForExistence(timeout: 5))
+        amountField.tap()
+        amountField.typeText("12.34")
+
+        app.buttons["chooseCategory"].tap()
+        let primaryWheel = app.pickers["primaryCategoryPicker"]
+        let subWheel = app.pickers["subcategoryPicker"]
+        XCTAssertTrue(primaryWheel.waitForExistence(timeout: 5))
+        XCTAssertTrue(subWheel.waitForExistence(timeout: 5))
+        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "购物")
+        XCTAssertEqual(subWheel.pickerWheels.element.value as? String, "无子类",
+                       "无子类的大类右列应显示「无子类」")
+        XCTAssertEqual(app.staticTexts["categorySelection"].label, "购物",
+                       "表单应同步显示所选大类（无子类时不拼接子类）")
+
+        app.buttons["doneCategoryWheel"].tap()
+        XCTAssertEqual(amountField.value as? String, "12.34", "收起后保留金额")
+        app.buttons["保存"].tap()
+        assertPersistedRow(category: "购物", amount: "12.34", in: app)
+        assertSummaries(show: "12.34", in: app)
+    }
+
+    /// 规格 2：给当前选中的大类新增第一个子类后，回到表单应自动选中该子类；
+    /// 再新增其他子类时，仍然有效的原选择应保留。保存写入所选子类标识。
+    func testAddingFirstSubcategoryToSelectedPrimarySelectsItAndKeepsValidChoice() {
+        let ledger = "uitest-\(UUID().uuidString).json"
+        let app = XCUIApplication()
+        app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": ledger]
+        app.launch()
+
+        app.buttons["分类"].tap()
+        app.buttons["addPrimary"].tap()
+        let nameField = app.alerts.firstMatch.textFields.firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5))
+        nameField.tap()
+        nameField.typeText("购物")
+        app.buttons["保存"].tap()
+        app.buttons["完成"].tap()
+
+        app.buttons["记一笔"].tap()
+        let amountField = app.textFields["0.00"]
+        XCTAssertTrue(amountField.waitForExistence(timeout: 5))
+        amountField.tap()
+        amountField.typeText("23.45")
+        app.buttons["chooseCategory"].tap()
+        let primaryWheel = app.pickers["primaryCategoryPicker"]
+        XCTAssertTrue(primaryWheel.waitForExistence(timeout: 5))
+        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "购物")
+        XCTAssertEqual(app.staticTexts["categorySelection"].label, "购物")
+        app.buttons["doneCategoryWheel"].tap()
+
+        // 在已打开的表单里给当前大类新增第一个子类。购物是最后一段，
+        // 取其「新增子类」按钮。
+        app.buttons["管理分类"].tap()
+        var addSubButtons = app.buttons.allElementsBoundByIndex.filter { $0.label == "新增子类" }
+        XCTAssertEqual(addSubButtons.count, 3)
+        addSubButtons.last?.tap()
+        var field = app.alerts.firstMatch.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("日用品")
+        app.alerts.firstMatch.buttons["保存"].tap()
+        app.buttons["完成"].tap()
+        XCTAssertEqual(app.staticTexts["categorySelection"].label, "购物 · 日用品",
+                       "新增首个子类后回表单应选中该子类")
+
+        // 再次新增子类，仍有效的「日用品」选择不应被重置。
+        app.buttons["管理分类"].tap()
+        addSubButtons = app.buttons.allElementsBoundByIndex.filter { $0.label == "新增子类" }
+        addSubButtons.last?.tap()
+        field = app.alerts.firstMatch.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("服饰")
+        app.alerts.firstMatch.buttons["保存"].tap()
+        app.buttons["完成"].tap()
+        XCTAssertEqual(app.staticTexts["categorySelection"].label, "购物 · 日用品",
+                       "仍有效的子类选择应保留，不被最新新增的子类覆盖")
+
+        app.buttons["保存"].tap()
+        assertPersistedRow(category: "购物", amount: "23.45", in: app)
+        assertPersistedRow(category: "日用品", amount: "23.45", in: app)
+        let row = app.cells.allElementsBoundByIndex.first { cell in
+            cell.staticTexts["购物"].exists && cell.staticTexts["23.45"].exists
+        }
+        XCTAssertNotNil(row)
+        XCTAssertFalse(row?.staticTexts["服饰"].exists ?? true,
+                       "逐笔行应写入当时选中的子类，而非后来新增的子类")
+    }
+
     // MARK: - Helpers
 
     private func save(_ amount: String, in app: XCUIApplication) {
