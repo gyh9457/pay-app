@@ -1,0 +1,507 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A0000000000000000000030 /* LedgerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000012 /* LedgerStore.swift */; };
+		A0000000000000000000031 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000013 /* Models.swift */; };
+		A0000000000000000000032 /* PayLedgerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000010 /* PayLedgerApp.swift */; };
+		A0000000000000000000033 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000011 /* ContentView.swift */; };
+		A0000000000000000000034 /* ExpenseEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000014 /* ExpenseEntryView.swift */; };
+		A0000000000000000000035 /* LedgerStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000016 /* LedgerStats.swift */; };
+		A0000000000000000000036 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000015 /* Assets.xcassets */; };
+		A0000000000000000000053 /* PayLedgerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000050 /* PayLedgerTests.swift */; };
+		A0000000000000000000093 /* PayLedgerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000090 /* PayLedgerUITests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A0000000000000000000081 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A0000000000000000000003;
+			remoteInfo = PayLedger;
+		};
+		A000000000000000000009B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A0000000000000000000003;
+			remoteInfo = PayLedger;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A0000000000000000000005 /* PayLedger.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PayLedger.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A0000000000000000000006 /* PayLedgerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PayLedgerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A0000000000000000000010 /* PayLedgerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayLedgerApp.swift; sourceTree = "<group>"; };
+		A0000000000000000000011 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A0000000000000000000012 /* LedgerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerStore.swift; sourceTree = "<group>"; };
+		A0000000000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A0000000000000000000014 /* ExpenseEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpenseEntryView.swift; sourceTree = "<group>"; };
+		A0000000000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A0000000000000000000016 /* LedgerStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerStats.swift; sourceTree = "<group>"; };
+		A0000000000000000000050 /* PayLedgerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayLedgerTests.swift; sourceTree = "<group>"; };
+		A0000000000000000000090 /* PayLedgerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayLedgerUITests.swift; sourceTree = "<group>"; };
+		A0000000000000000000092 /* PayLedgerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PayLedgerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A0000000000000000000021 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0000000000000000000052 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0000000000000000000095 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000040 /* PayLedger */,
+				A0000000000000000000054 /* PayLedgerTests */,
+				A0000000000000000000091 /* PayLedgerUITests */,
+				A0000000000000000000060 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A0000000000000000000040 /* PayLedger */ = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000010 /* PayLedgerApp.swift */,
+				A0000000000000000000011 /* ContentView.swift */,
+				A0000000000000000000012 /* LedgerStore.swift */,
+				A0000000000000000000013 /* Models.swift */,
+				A0000000000000000000014 /* ExpenseEntryView.swift */,
+				A0000000000000000000016 /* LedgerStats.swift */,
+				A0000000000000000000015 /* Assets.xcassets */,
+			);
+			path = PayLedger/PayLedger;
+			sourceTree = "<group>";
+		};
+		A0000000000000000000054 /* PayLedgerTests */ = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000050 /* PayLedgerTests.swift */,
+			);
+			path = PayLedger/PayLedgerTests;
+			sourceTree = "<group>";
+		};
+		A0000000000000000000091 /* PayLedgerUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000090 /* PayLedgerUITests.swift */,
+			);
+			path = PayLedger/PayLedgerUITests;
+			sourceTree = "<group>";
+		};
+		A0000000000000000000060 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000005 /* PayLedger.app */,
+				A0000000000000000000006 /* PayLedgerTests.xctest */,
+				A0000000000000000000092 /* PayLedgerUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A0000000000000000000003 /* PayLedger */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A0000000000000000000071 /* Build configuration list for PBXNativeTarget "PayLedger" */;
+			buildPhases = (
+				A0000000000000000000020 /* Sources */,
+				A0000000000000000000021 /* Frameworks */,
+				A0000000000000000000022 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PayLedger;
+			productName = PayLedger;
+			productReference = A0000000000000000000005 /* PayLedger.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A0000000000000000000004 /* PayLedgerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A0000000000000000000074 /* Build configuration list for PBXNativeTarget "PayLedgerTests" */;
+			buildPhases = (
+				A0000000000000000000051 /* Sources */,
+				A0000000000000000000052 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A0000000000000000000080 /* PBXTargetDependency */,
+			);
+			name = PayLedgerTests;
+			productName = PayLedgerTests;
+			productReference = A0000000000000000000006 /* PayLedgerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A0000000000000000000096 /* PayLedgerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A0000000000000000000097 /* Build configuration list for PBXNativeTarget "PayLedgerUITests" */;
+			buildPhases = (
+				A0000000000000000000094 /* Sources */,
+				A0000000000000000000095 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A000000000000000000009A /* PBXTargetDependency */,
+			);
+			name = PayLedgerUITests;
+			productName = PayLedgerUITests;
+			productReference = A0000000000000000000092 /* PayLedgerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1540;
+				TargetAttributes = {
+					A0000000000000000000003 = {
+						CreatedOnToolsVersion = 15.4;
+					};
+					A0000000000000000000004 = {
+						CreatedOnToolsVersion = 15.4;
+						TestTargetID = A0000000000000000000003;
+					};
+					A0000000000000000000096 = {
+						CreatedOnToolsVersion = 15.4;
+						TestTargetID = A0000000000000000000003;
+					};
+				};
+			};
+			buildConfigurationList = A0000000000000000000070 /* Build configuration list for PBXProject "PayLedger" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A0000000000000000000002;
+			productRefGroup = A0000000000000000000060 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A0000000000000000000003 /* PayLedger */,
+				A0000000000000000000004 /* PayLedgerTests */,
+				A0000000000000000000096 /* PayLedgerUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A0000000000000000000022 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A0000000000000000000036 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A0000000000000000000020 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A0000000000000000000032 /* PayLedgerApp.swift in Sources */,
+				A0000000000000000000033 /* ContentView.swift in Sources */,
+				A0000000000000000000030 /* LedgerStore.swift in Sources */,
+				A0000000000000000000031 /* Models.swift in Sources */,
+				A0000000000000000000034 /* ExpenseEntryView.swift in Sources */,
+				A0000000000000000000035 /* LedgerStats.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0000000000000000000051 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A0000000000000000000053 /* PayLedgerTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0000000000000000000094 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A0000000000000000000093 /* PayLedgerUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A0000000000000000000080 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A0000000000000000000003 /* PayLedger */;
+			targetProxy = A0000000000000000000081 /* PBXContainerItemProxy */;
+		};
+		A000000000000000000009A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A0000000000000000000003 /* PayLedger */;
+			targetProxy = A000000000000000000009B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A0000000000000000000072 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.PayLedger;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A0000000000000000000073 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.PayLedger;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A0000000000000000000075 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PayLedger.app/PayLedger";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.PayLedgerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A0000000000000000000076 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PayLedger.app/PayLedger";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.PayLedgerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A0000000000000000000077 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.5;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A0000000000000000000078 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.5;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A0000000000000000000098 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.PayLedgerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PayLedger;
+			};
+			name = Debug;
+		};
+		A0000000000000000000099 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.PayLedgerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PayLedger;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A0000000000000000000070 /* Build configuration list for PBXProject "PayLedger" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0000000000000000000077 /* Debug */,
+				A0000000000000000000078 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A0000000000000000000071 /* Build configuration list for PBXNativeTarget "PayLedger" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0000000000000000000072 /* Debug */,
+				A0000000000000000000073 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A0000000000000000000074 /* Build configuration list for PBXNativeTarget "PayLedgerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0000000000000000000075 /* Debug */,
+				A0000000000000000000076 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A0000000000000000000097 /* Build configuration list for PBXNativeTarget "PayLedgerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0000000000000000000098 /* Debug */,
+				A0000000000000000000099 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A0000000000000000000001 /* Project object */;
+}
