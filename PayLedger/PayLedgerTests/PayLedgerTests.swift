@@ -86,6 +86,56 @@ final class PayLedgerTests: XCTestCase {
         XCTAssertTrue(store.expenses.isEmpty)
     }
 
+    func testExpenseChangesPersistAndKeepOpeningBalanceSeparate() throws {
+        let store = LedgerStore(fileURL: fileURL)
+        let cutoff = exampleDate(2026, 11, 15)
+        let enableDay = exampleDate(2026, 11, 16)
+        let week = try XCTUnwrap(LedgerStats.weekInterval(containing: enableDay))
+        let month = try XCTUnwrap(LedgerStats.monthInterval(containing: enableDay))
+        let year = try XCTUnwrap(LedgerStats.yearInterval(containing: enableDay))
+        let history = HistorySnapshot(
+            monthlySummaries: [HistoricalMonth(year: 2026, month: 10, amountCents: 4000)],
+            openingBalance: OpeningBalance(amountCents: 5000, cutoffYear: 2026, cutoffMonth: 11, cutoffDay: 15))
+        try store.addExpense(amountCents: 100, categoryID: "food", date: cutoff)
+        try store.addExpense(amountCents: 500, categoryID: "food", date: enableDay)
+        let original = try XCTUnwrap(store.expenses.last)
+        try store.updateExpense(original, amountCents: 700, categoryID: "transport", subcategoryID: "transport-bus")
+        let edited = try XCTUnwrap(LedgerStore(fileURL: fileURL).expenses.last)
+        XCTAssertEqual(edited.id, original.id)
+        XCTAssertEqual(edited.date, original.date)
+        XCTAssertEqual(edited.consumptionDay, original.consumptionDay)
+        XCTAssertEqual(edited.subcategoryID, "transport-bus")
+        XCTAssertThrowsError(try store.deleteExpense(original))
+        XCTAssertEqual(LedgerStats.weekCategoryGroups(store.expenses, history: history, in: week).map(\.categoryID),
+                       ["transport"])
+        XCTAssertEqual(LedgerStats.totalCents(store.expenses, history: history, in: week), 700)
+        XCTAssertEqual(LedgerStats.periodTotalCents(store.expenses, history: history, in: month), 5700)
+
+        try store.updateExpense(edited, amountCents: 700, categoryID: "transport",
+                                subcategoryID: "transport-bus", date: cutoff)
+        let moved = try XCTUnwrap(store.expenses.last)
+        XCTAssertEqual(moved.consumptionDay, ConsumptionDay(year: 2026, month: 11, day: 15))
+        XCTAssertTrue(LedgerStats.weekCategoryGroups(store.expenses, history: history, in: week).isEmpty)
+        XCTAssertEqual(LedgerStats.periodTotalCents(store.expenses, history: history, in: month), 5000)
+        try store.deleteExpense(moved)
+        let reopened = LedgerStore(fileURL: fileURL)
+        XCTAssertEqual(reopened.expenses.map(\.amountCents), [100])
+        XCTAssertEqual(LedgerStats.periodTotalCents(reopened.expenses, history: history, in: year), 9000)
+    }
+
+    func testExpenseUpdateAndDeletionKeepOriginalWhenPublishFails() throws {
+        let seed = LedgerStore(fileURL: fileURL)
+        try seed.addExpense(amountCents: 1234, categoryID: "food")
+        let original = try XCTUnwrap(seed.expenses.first)
+        let originalBytes = try Data(contentsOf: fileURL)
+        let store = LedgerStore(fileURL: fileURL, finalPublishFailure: { TestFinalPublishError.failed })
+        XCTAssertThrowsError(try store.updateExpense(original, amountCents: 3300, categoryID: "food",
+                                                     subcategoryID: nil))
+        XCTAssertThrowsError(try store.deleteExpense(original))
+        XCTAssertEqual(store.expenses, [original])
+        XCTAssertEqual(try Data(contentsOf: fileURL), originalBytes)
+    }
+
     // MARK: - Persistence failure seam (write-before-memory, no silent loss)
 
     func testFailedWriteDoesNotChangeMemoryOrLeavePartialFile() {
@@ -633,6 +683,13 @@ final class PayLedgerTests: XCTestCase {
         try first.addExpense(amountCents: 8765, categoryID: "transport")
         XCTAssertEqual(first.expenses.map(\.amountCents).sorted(), [1234, 8765],
                        "writes stay open while cleanup is pending")
+        XCTAssertThrowsError(try first.deleteExpense(records[0])) { error in
+            guard case LedgerStoreError.expenseChangeRequiresLegacyCleanup = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+        XCTAssertThrowsError(try first.updateExpense(records[0], amountCents: 1200, categoryID: "food",
+                                                     subcategoryID: nil))
 
         failRemoval = false
         let reopened = LedgerStore(fileURL: target, legacyFileURL: legacy)

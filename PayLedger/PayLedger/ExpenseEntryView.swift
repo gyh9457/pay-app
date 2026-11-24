@@ -4,22 +4,27 @@ struct ExpenseEntryView: View {
     @ObservedObject var store: LedgerStore
     @ObservedObject var categoryStore: CategoryStore
     @Environment(\.dismiss) private var dismiss
-    @State private var amountText = ""
+    private let expense: Expense?
+    @State private var amountText: String
+    @State private var selectedDate: Date
     @State private var primaryID: String
     @State private var subcategoryID: String?
     @State private var errorMessage: String?
     @State private var isManagingCategories = false
     @State private var isChoosingCategory = false
 
-    init(store: LedgerStore, categoryStore: CategoryStore) {
+    init(store: LedgerStore, categoryStore: CategoryStore, expense: Expense? = nil) {
         self.store = store
         self.categoryStore = categoryStore
-        _primaryID = State(initialValue: categoryStore.groups.first?.id ?? "food")
-        _subcategoryID = State(initialValue: categoryStore.groups.first?.subcategories.first?.id)
-    }
-
-    private var subcategories: [ExpenseSubcategory] {
-        categoryStore.subcategories(in: primaryID)
+        self.expense = expense
+        let firstGroup = categoryStore.groups.first
+        _amountText = State(initialValue: expense.map { Currency.format($0.amountCents) } ?? "")
+        _primaryID = State(initialValue: expense?.categoryID ?? firstGroup?.id ?? "food")
+        _subcategoryID = State(initialValue: expense == nil ? firstGroup?.subcategories.first?.id : expense?.subcategoryID)
+        let calendar = LedgerStats.calendar
+        _selectedDate = State(initialValue: expense.map {
+            LedgerStats.consumptionDay(of: $0, calendar: calendar).date(in: calendar) ?? $0.date
+        } ?? AppClock.now)
     }
 
     private var selectionLabel: String {
@@ -56,14 +61,20 @@ struct ExpenseEntryView: View {
                     Button("管理分类") { isManagingCategories = true }
                 }
                 Section {
-                    HStack { Text("日期"); Spacer(); Text("今天（默认）").foregroundStyle(.secondary) }
+                    if expense != nil {
+                        DatePicker("日期", selection: $selectedDate, displayedComponents: .date)
+                            .environment(\.calendar, LedgerStats.calendar)
+                            .environment(\.timeZone, LedgerStats.calendar.timeZone)
+                    } else {
+                        HStack { Text("日期"); Spacer(); Text("今天（默认）").foregroundStyle(.secondary) }
+                    }
                     HStack { Text("账户"); Spacer(); Text("现金（默认）").foregroundStyle(.secondary) }
                 }
                 if let errorMessage {
                     Section { Text(errorMessage).foregroundStyle(.red) }
                 }
             }
-            .navigationTitle("记一笔")
+            .navigationTitle(expense == nil ? "记一笔" : "修改流水")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消") { dismiss() }
@@ -78,14 +89,19 @@ struct ExpenseEntryView: View {
             .sheet(isPresented: $isChoosingCategory) {
                 CategoryWheelSheet(categoryStore: categoryStore,
                                    primaryID: $primaryID,
-                                   subcategoryID: $subcategoryID)
+                                   subcategoryID: $subcategoryID,
+                                   allowsNoSubcategory: expense != nil)
                 .presentationDetents([.height(300)])
                 .presentationDragIndicator(.visible)
             }
-            .onChange(of: categoryStore.groups) { _, _ in
+            .onChange(of: categoryStore.groups) { previousGroups, _ in
                 // Adding the first child of the selected primary (or editing
                 // the tree) must update the form's selection without dropping
                 // a choice that is still valid.
+                if expense != nil, subcategoryID == nil,
+                   previousGroups.contains(where: { $0.id == primaryID && !$0.subcategories.isEmpty }) {
+                    return
+                }
                 reconcileSubcategory()
             }
         }
@@ -102,8 +118,13 @@ struct ExpenseEntryView: View {
             return
         }
         do {
-            try store.addExpense(amountCents: cents, categoryID: primaryID,
-                                 subcategoryID: subcategoryID, date: AppClock.now)
+            if let expense {
+                try store.updateExpense(expense, amountCents: cents, categoryID: primaryID,
+                                        subcategoryID: subcategoryID, date: selectedDate)
+            } else {
+                try store.addExpense(amountCents: cents, categoryID: primaryID,
+                                     subcategoryID: subcategoryID, date: AppClock.now)
+            }
             errorMessage = nil
             dismiss()
         } catch {
@@ -121,6 +142,7 @@ struct CategoryWheelSheet: View {
     @ObservedObject var categoryStore: CategoryStore
     @Binding var primaryID: String
     @Binding var subcategoryID: String?
+    var allowsNoSubcategory = false
     @Environment(\.dismiss) private var dismiss
 
     private var subcategories: [ExpenseSubcategory] {
@@ -131,6 +153,9 @@ struct CategoryWheelSheet: View {
         NavigationStack {
             HStack(spacing: 0) {
                 Picker("一级分类", selection: $primaryID) {
+                    if !categoryStore.groups.contains(where: { $0.id == primaryID }) {
+                        Text(categoryStore.primaryName(for: primaryID)).tag(primaryID)
+                    }
                     ForEach(categoryStore.groups) { group in
                         Text(group.name).tag(group.id)
                     }
@@ -150,14 +175,11 @@ struct CategoryWheelSheet: View {
                     get: { subcategoryID ?? "" },
                     set: { subcategoryID = $0.isEmpty ? nil : $0 }
                 )) {
-                    if subcategories.isEmpty {
-                        // A primary with no children is still saveable; show an
-                        // explicit placeholder instead of an empty wheel.
+                    if subcategories.isEmpty || allowsNoSubcategory {
                         Text("无子类").tag("")
-                    } else {
-                        ForEach(subcategories) { sub in
-                            Text(sub.name).tag(sub.id)
-                        }
+                    }
+                    ForEach(subcategories) { sub in
+                        Text(sub.name).tag(sub.id)
                     }
                 }
                 .pickerStyle(.wheel)

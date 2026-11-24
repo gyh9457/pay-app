@@ -104,6 +104,8 @@ struct ContentView: View {
                                 Text(Currency.format(expense.amountCents))
                                     .foregroundStyle(.green)
                             }
+                            .modifier(ExpenseRowActions(expense: expense, store: store,
+                                                        categoryStore: categoryStore))
                         }
                     }
                 }
@@ -467,6 +469,7 @@ private func billMonthTitle(_ date: Date) -> String {
 
 private struct BillExpenseRow: View {
     let expense: Expense
+    let store: LedgerStore
     let categoryStore: CategoryStore
 
     var body: some View {
@@ -483,6 +486,56 @@ private struct BillExpenseRow: View {
             Spacer()
             Text(Currency.format(expense.amountCents)).foregroundStyle(.green)
                 .accessibilityIdentifier("billExpenseAmount-\(expense.id.uuidString)")
+        }
+        .modifier(ExpenseRowActions(expense: expense, store: store, categoryStore: categoryStore))
+    }
+}
+
+private struct ExpenseRowActions: ViewModifier {
+    let expense: Expense
+    let store: LedgerStore
+    let categoryStore: CategoryStore
+    @State private var isEditing = false
+    @State private var isConfirmingDeletion = false
+    @State private var isShowingDeleteError = false
+    @State private var deleteError = ""
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .onTapGesture { isEditing = true }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button { isConfirmingDeletion = true } label: {
+                    Label("删除", systemImage: "trash")
+                }
+                .tint(.red)
+                Button { isEditing = true } label: {
+                    Label("修改", systemImage: "pencil")
+                }
+                .tint(.blue)
+            }
+            .sheet(isPresented: $isEditing) {
+                ExpenseEntryView(store: store, categoryStore: categoryStore, expense: expense)
+            }
+            .alert("删除这笔流水？", isPresented: $isConfirmingDeletion) {
+                Button("取消", role: .cancel) {}
+                Button("删除", role: .destructive) { deleteExpense() }
+            } message: {
+                Text("删除后无法恢复。")
+            }
+            .alert("无法删除流水", isPresented: $isShowingDeleteError) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(deleteError)
+            }
+    }
+
+    private func deleteExpense() {
+        do {
+            try store.deleteExpense(expense)
+        } catch {
+            deleteError = error.localizedDescription
+            isShowingDeleteError = true
         }
     }
 }
@@ -525,7 +578,7 @@ struct WeekBillView: View {
                     }
                     if expandedGroups.contains(group.id) {
                         ForEach(group.expenses) { expense in
-                            BillExpenseRow(expense: expense, categoryStore: categoryStore)
+                            BillExpenseRow(expense: expense, store: store, categoryStore: categoryStore)
                         }
                     }
                 }
@@ -612,7 +665,7 @@ struct MonthBillView: View {
                                     BillAmount(cents: LedgerStats.sumCents(day.expenses))
                                 }
                                 ForEach(day.expenses) { expense in
-                                    BillExpenseRow(expense: expense, categoryStore: categoryStore)
+                                    BillExpenseRow(expense: expense, store: store, categoryStore: categoryStore)
                                 }
                             }
                         }
@@ -757,7 +810,7 @@ struct YearBillView: View {
                                         BillAmount(cents: LedgerStats.sumCents(day.expenses))
                                     }
                                 case .expense(let expense):
-                                    BillExpenseRow(expense: expense, categoryStore: categoryStore)
+                                    BillExpenseRow(expense: expense, store: store, categoryStore: categoryStore)
                                 }
                             }
                         }

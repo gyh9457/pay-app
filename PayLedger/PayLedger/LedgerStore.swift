@@ -42,6 +42,9 @@ enum LedgerStoreError: Error, LocalizedError {
     case unreadableCategories
     /// Data integrity is not confirmed, so accounting is paused until reopen.
     case recoveryRequired
+    case expenseChanged
+    case invalidExpenseAmount
+    case expenseChangeRequiresLegacyCleanup
     /// A history file exists but cannot be read or decoded. The original is
     /// preserved and every write is blocked so pasted historical totals are
     /// never silently replaced by an empty snapshot.
@@ -78,6 +81,12 @@ enum LedgerStoreError: Error, LocalizedError {
             return "分类文件无法读取，已保留原文件且不会覆盖，请联系维护。"
         case .recoveryRequired:
             return "账本暂需恢复，记账已暂停。请重新打开应用重试。"
+        case .expenseChanged:
+            return "这笔流水已变更，请返回列表后重试。"
+        case .invalidExpenseAmount:
+            return "请输入大于 0、精确到分的金额"
+        case .expenseChangeRequiresLegacyCleanup:
+            return "旧账本副本待清理。请重新打开应用，待清理完成后再修改或删除流水。"
         case .unreadableHistory:
             return "历史汇总文件无法读取，已保留原文件且不会覆盖，请联系维护。"
         case .historyProtectionUnconfirmed:
@@ -245,9 +254,7 @@ final class LedgerStore: ObservableObject {
     func addExpense(amountCents: Int, categoryID: String, subcategoryID: String? = nil,
                     date: Date = Date()) throws {
         guard amountCents > 0 else { return }
-        guard !migrationPending else { throw LedgerStoreError.migrationPending }
-        guard readiness != .needsRecovery else { throw LedgerStoreError.recoveryRequired }
-        guard !isLedgerUnreadable else { throw LedgerStoreError.unreadableLedger }
+        try requireWritableLedger()
 
         // Capture the chosen calendar day now, in the device calendar at
         // recording time. Storing components (not the instant) is what keeps a
@@ -256,6 +263,46 @@ final class LedgerStore: ObservableObject {
         let updated = expenses + [Expense(amountCents: amountCents, categoryID: categoryID,
                                           subcategoryID: subcategoryID, date: date,
                                           consumptionDay: day)]
+        try saveExpenses(updated)
+    }
+
+    func updateExpense(_ expense: Expense, amountCents: Int, categoryID: String,
+                       subcategoryID: String?, date: Date? = nil) throws {
+        guard amountCents > 0 else { throw LedgerStoreError.invalidExpenseAmount }
+        let index = try indexForChangingExpense(expense)
+        let calendar = LedgerStats.calendar
+        let originalDay = LedgerStats.consumptionDay(of: expense, calendar: calendar)
+        let selectedDay = date.map { ConsumptionDay.from($0, calendar: calendar) } ?? originalDay
+        var updated = expenses
+        updated[index] = Expense(id: expense.id, amountCents: amountCents, categoryID: categoryID,
+                                 subcategoryID: subcategoryID,
+                                 date: selectedDay == originalDay ? expense.date : (date ?? expense.date),
+                                 consumptionDay: selectedDay)
+        try saveExpenses(updated)
+    }
+
+    func deleteExpense(_ expense: Expense) throws {
+        let index = try indexForChangingExpense(expense)
+        var updated = expenses
+        updated.remove(at: index)
+        try saveExpenses(updated)
+    }
+
+    private func requireWritableLedger() throws {
+        guard !migrationPending else { throw LedgerStoreError.migrationPending }
+        guard readiness != .needsRecovery else { throw LedgerStoreError.recoveryRequired }
+        guard !isLedgerUnreadable else { throw LedgerStoreError.unreadableLedger }
+    }
+
+    private func indexForChangingExpense(_ expense: Expense) throws -> Int {
+        try requireWritableLedger()
+        // A retained legacy copy could re-import the old row on restart.
+        guard readiness != .cleanupPending else { throw LedgerStoreError.expenseChangeRequiresLegacyCleanup }
+        guard let index = expenses.firstIndex(of: expense) else { throw LedgerStoreError.expenseChanged }
+        return index
+    }
+
+    private func saveExpenses(_ updated: [Expense]) throws {
         try commit(updated)
         expenses = updated
     }

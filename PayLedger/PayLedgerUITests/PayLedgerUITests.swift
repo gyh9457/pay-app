@@ -25,6 +25,52 @@ final class PayLedgerUITests: XCTestCase {
         assertSummaries(show: exampleAmount, in: app)
     }
 
+    func testEditFromHomeAndDeleteFromWeekBillPersistAfterRelaunch() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": "uitest-\(UUID().uuidString).json"]
+        app.launch()
+        save("12.34", in: app)
+        save("5.00", in: app)
+        let original = try XCTUnwrap(app.cells.allElementsBoundByIndex.first {
+            $0.staticTexts["早午晚餐"].exists && $0.staticTexts["12.34"].exists
+        })
+        original.tap()
+        XCTAssertTrue(app.navigationBars["修改流水"].waitForExistence(timeout: 5))
+        let amount = app.textFields["0.00"]
+        XCTAssertEqual(amount.value as? String, "12.34")
+        amount.tap()
+        amount.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5) + "23.45")
+        app.buttons["保存"].tap()
+        assertPersistedRow(category: "早午晚餐", amount: "23.45", in: app)
+        assertSummaries(show: "28.45", in: app)
+
+        openBill("本周", in: app)
+        tapCell(with: "食品酒水", in: app)
+        let edited = try XCTUnwrap(app.cells.allElementsBoundByIndex.first {
+            $0.staticTexts["早午晚餐"].exists && $0.staticTexts["23.45"].exists
+        })
+        edited.swipeLeft()
+        app.buttons["删除"].tap()
+        let confirmation = app.alerts["删除这笔流水？"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["取消"].tap()
+        assertPersistedRow(category: "早午晚餐", amount: "23.45", in: app)
+
+        edited.swipeLeft()
+        app.buttons["删除"].tap()
+        confirmation.buttons["删除"].tap()
+        XCTAssertTrue(app.navigationBars["周账单"].exists)
+        assertBillTotal("5.00", in: app)
+        assertPersistedRow(category: "早午晚餐", amount: "5.00", in: app)
+        XCTAssertEqual(countCells(containing: "23.45", in: app), 0)
+
+        app.terminate()
+        app.launch()
+        assertPersistedRow(category: "早午晚餐", amount: "5.00", in: app)
+        assertSummaries(show: "5.00", in: app)
+        XCTAssertFalse(app.staticTexts["23.45"].exists)
+    }
+
     /// Rerunnable cross-midnight check: the pinned clock is advanced on the
     /// SAME open home screen (no terminate/relaunch, so a reference date fixed
     /// at view initialization would be caught). The new expense lands in the
