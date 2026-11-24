@@ -32,12 +32,31 @@ enum LedgerStoreError: Error, LocalizedError {
     case migrationVerificationFailed
     /// A staged ledger did not byte-match the encoded data before commit.
     case writeVerificationFailed
+    /// The live ledger changed (or became unreadable) after startup confirmed
+    /// the snapshot a consumption-day backfill was computed from. The live
+    /// bytes were preserved and the backfill was not published.
+    case ledgerChangedDuringBackfill
     case writeFailed(underlying: Error)
     /// A category file exists but cannot be read or decoded. The original is
     /// preserved and writes are blocked so defaults never overwrite it.
     case unreadableCategories
     /// Data integrity is not confirmed, so accounting is paused until reopen.
     case recoveryRequired
+    /// A history file exists but cannot be read or decoded. The original is
+    /// preserved and every write is blocked so pasted historical totals are
+    /// never silently replaced by an empty snapshot.
+    case unreadableHistory
+    /// An observed history file exists but neither its directory nor the
+    /// file itself could be confirmed backup-excluded. Writes are blocked so
+    /// history is never persisted without on-device protection.
+    case historyProtectionUnconfirmed
+    /// The user typed a whole-month summary in November 2026 or later, or a
+    /// cutoff outside November 2026 / on a non-existent day. Nothing was saved.
+    case invalidHistoryInput
+    /// The per-record ledger is unrecovered, so its expenses may be unloaded.
+    /// An opening balance would represent an unknown covered set and must not
+    /// be saved or replaced until the ledger is trusted again.
+    case openingBalancePausedForRecovery
 
     var errorDescription: String? {
         switch self {
@@ -51,12 +70,22 @@ enum LedgerStoreError: Error, LocalizedError {
             return "历史账本迁移校验失败，已保留原文件。"
         case .writeVerificationFailed:
             return "保存校验失败，本次未保存。"
+        case .ledgerChangedDuringBackfill:
+            return "账本在回填期间发生变化，已保留原文件并暂停记账，请重新打开应用重试。"
         case .writeFailed(let underlying):
             return "保存失败：\(underlying.localizedDescription)"
         case .unreadableCategories:
             return "分类文件无法读取，已保留原文件且不会覆盖，请联系维护。"
         case .recoveryRequired:
             return "账本暂需恢复，记账已暂停。请重新打开应用重试。"
+        case .unreadableHistory:
+            return "历史汇总文件无法读取，已保留原文件且不会覆盖，请联系维护。"
+        case .historyProtectionUnconfirmed:
+            return "历史汇总文件未能确认仅存本机，已暂停保存并保留原文件，请重新打开应用重试。"
+        case .invalidHistoryInput:
+            return "历史数据无效：月度汇总须为 2026 年 11 月之前的有效年月；期初截止日须为 2026 年 11 月的有效日期。"
+        case .openingBalancePausedForRecovery:
+            return "账本暂需恢复，期初累计暂不可保存。请重新打开应用重试。"
         }
     }
 }
@@ -76,6 +105,10 @@ final class LedgerStore: ObservableObject {
 
     private let fileURL: URL
     private let legacyFileURL: URL?
+    /// Whether a one-time consumption-day backfill may be published. A unit
+    /// test host launches the real app entry against production paths; it must
+    /// never rewrite the on-device ledger just because it decoded old records.
+    private let backfillConsumptionDays: Bool
     private var isLedgerUnreadable = false
     private var migrationPending = false
 
@@ -92,6 +125,19 @@ final class LedgerStore: ObservableObject {
     /// a following save would publish over them. Nil when no migration ran or
     /// it could not be verified.
     private var migrationVerifiedTargetSnapshot: Data?
+
+    /// Consumption days computed from timestamps for an old ledger, held in
+    /// memory until the launch consistency check and protection check confirm
+    /// the bytes we decoded are the on-device ledger. Publishing inside
+    /// `load()` makes the later reads disagree and can overwrite a newer
+    /// snapshot, so the atomic publish is deferred to `init` after those checks.
+    private var pendingConsumptionDayData: Data?
+
+    /// The exact live-ledger bytes confirmed by the launch consistency check
+    /// that `pendingConsumptionDayData` was derived from. The backfill may only
+    /// be published while the live file still matches these bytes; a change
+    /// between launch and publish must never be replaced by the older snapshot.
+    private var backfillBaseSnapshot: Data?
 
     /// Test-only seam: replaces the backup-exclusion enforcer so tests can
     /// simulate the platform refusing to apply the marker. Production code
@@ -139,7 +185,8 @@ final class LedgerStore: ObservableObject {
          backupExclusion: ((URL) throws -> Void)? = nil,
          removeLegacyFile: ((URL) throws -> Void)? = nil,
          finalPublishFailure: (() -> Error?)? = nil,
-         readLedgerFile: ((URL) throws -> Data)? = nil) {
+         readLedgerFile: ((URL) throws -> Data)? = nil,
+         backfillConsumptionDays: Bool = true) {
         let fm = FileManager.default
         let usingDefaultLocation = fileURL == nil
         self.fileURL = fileURL ?? Self.defaultFileURL
@@ -148,6 +195,7 @@ final class LedgerStore: ObservableObject {
         self.removeLegacyFile = removeLegacyFile
         self.finalPublishFailure = finalPublishFailure
         self.readLedgerFile = readLedgerFile
+        self.backfillConsumptionDays = backfillConsumptionDays
 
         if usingDefaultLocation {
             let directory = self.fileURL.deletingLastPathComponent()
@@ -183,6 +231,12 @@ final class LedgerStore: ObservableObject {
         // run (every read reports a definite absence) is left untouched.
         bestEffortMarkLedgerFile(observations: [launchPresence, markingPresence,
                                                 protectionPresence, migrationTargetObservation])
+        // One-time consumption-day backfill is the last fallible write of
+        // startup. Publish only after the launch reads agree, the verified
+        // migration snapshot matches, and a protected directory is confirmed;
+        // a refused publish keeps the original bytes and pauses accounting so
+        // an unpersisted attribution can never gate an opening balance.
+        finalizeConsumptionDayBackfill()
     }
 
     /// Commits a new expense with a single atomic replacement. All fallible
@@ -195,8 +249,13 @@ final class LedgerStore: ObservableObject {
         guard readiness != .needsRecovery else { throw LedgerStoreError.recoveryRequired }
         guard !isLedgerUnreadable else { throw LedgerStoreError.unreadableLedger }
 
+        // Capture the chosen calendar day now, in the device calendar at
+        // recording time. Storing components (not the instant) is what keeps a
+        // later time-zone change from moving this record across the cutoff.
+        let day = ConsumptionDay.from(date, calendar: LedgerStats.calendar)
         let updated = expenses + [Expense(amountCents: amountCents, categoryID: categoryID,
-                                          subcategoryID: subcategoryID, date: date)]
+                                          subcategoryID: subcategoryID, date: date,
+                                          consumptionDay: day)]
         try commit(updated)
         expenses = updated
     }
@@ -219,7 +278,13 @@ final class LedgerStore: ObservableObject {
     ///   create that fails if the live ledger already exists. First migration
     ///   checked for absence earlier; a target appearing before publish must
     ///   never be overwritten. Normal saves pass false and replace in place.
-    private func commitData(_ data: Data, failIfTargetExists: Bool = false) throws {
+    /// - Parameter expectedCurrentData: when provided, the publish is refused
+    ///   unless the live ledger still byte-matches this snapshot. The check and
+    ///   the publish are consecutive synchronous steps with no suspension
+    ///   point, so a change during staging cannot be replaced by an older byte
+    ///   snapshot. Production writes are serialized through this store.
+    private func commitData(_ data: Data, failIfTargetExists: Bool = false,
+                            expectedCurrentData: Data? = nil) throws {
         let directory = fileURL.deletingLastPathComponent()
         let staging = directory.appendingPathComponent(Self.stagingFileName)
         defer { try? FileManager.default.removeItem(at: staging) }
@@ -234,6 +299,16 @@ final class LedgerStore: ObservableObject {
             }
             if let finalPublishFailure, let failure = finalPublishFailure() {
                 throw failure
+            }
+            // The snapshot startup confirmed must still be the live ledger
+            // immediately before the atomic publish. A concurrent update (or a
+            // path that became unreadable) keeps its bytes untouched and aborts
+            // the publish; the caller enters recovery and retries next launch.
+            if let expectedCurrentData {
+                let current = readLedgerPresence(at: fileURL)
+                guard case .present(let actual) = current, actual == expectedCurrentData else {
+                    throw LedgerStoreError.ledgerChangedDuringBackfill
+                }
             }
             if failIfTargetExists {
                 // link(2) is atomic and fails with EEXIST when the destination
@@ -381,6 +456,35 @@ final class LedgerStore: ObservableObject {
         return protectionPresence
     }
 
+    /// Publishes a computed consumption-day backfill only once startup has
+    /// agreed on a single, protected snapshot. `launchPresence`, the marking
+    /// read, the protection read and the migration-verified snapshot have all
+    /// been reconciled by this point (see `init`), so an in-memory day derived
+    /// from a stale or partial read is never written over the on-device ledger.
+    /// A refused publish leaves the original bytes untouched and pauses
+    /// accounting; a later launch retries the one-time backfill.
+    private func finalizeConsumptionDayBackfill() {
+        guard backfillConsumptionDays,
+              let data = pendingConsumptionDayData,
+              !migrationPending,
+              !isLedgerUnreadable,
+              readiness != .needsRecovery else { return }
+        do {
+            // Refuse the publish if the live ledger no longer matches the
+            // snapshot startup verified. The original bytes are kept and the
+            // next launch recomputes the backfill against whatever is on disk.
+            try commitData(data, expectedCurrentData: backfillBaseSnapshot)
+            // Startup continues against the newly published snapshot.
+            migrationVerifiedTargetSnapshot = data
+        } catch {
+            // The atomic publish moved or rewrote nothing; keep the original
+            // bytes and do not open on an attribution we failed to persist.
+            readiness = .needsRecovery
+        }
+        pendingConsumptionDayData = nil
+        backfillBaseSnapshot = nil
+    }
+
     @discardableResult
     private func load() -> LedgerFilePresence {
         let presence = readLedgerPresence(at: fileURL)
@@ -390,7 +494,34 @@ final class LedgerStore: ObservableObject {
             return presence
         case .present(let data):
             do {
-                expenses = try JSONDecoder().decode([Expense].self, from: data)
+                var decoded = try JSONDecoder().decode([Expense].self, from: data)
+                // A ledger written before consumption days existed has records
+                // with no independent day. Establish each one's day from its
+                // timestamp in the device calendar ONCE and persist it, so a
+                // later restart under another time zone keeps the same
+                // attribution. Original timestamp/amount/category are kept.
+                let cal = LedgerStats.calendar
+                var backfilled = false
+                decoded = decoded.map { expense in
+                    guard expense.consumptionDay == nil else { return expense }
+                    backfilled = true
+                    var copy = expense
+                    copy.consumptionDay = ConsumptionDay.from(expense.date, calendar: cal)
+                    return copy
+                }
+                if backfilled && backfillConsumptionDays {
+                    // Establish the days in memory now, but hold the encoded
+                    // snapshot for `finalizeConsumptionDayBackfill()` to publish
+                    // only after startup consistency and protection are
+                    // confirmed. Publishing here makes the marking/protection
+                    // reads disagree with this launch read and can overwrite a
+                    // newer on-device snapshot.
+                    pendingConsumptionDayData = try? JSONEncoder().encode(decoded)
+                    // Carry the confirmed launch bytes so the publish can
+                    // refuse to replace a ledger that changed in the meantime.
+                    backfillBaseSnapshot = data
+                }
+                expenses = decoded
             } catch {
                 // A file exists but cannot be read/decoded. Preserve it byte-for-byte,
                 // pause accounting, and never present an empty ledger instead.
@@ -514,7 +645,13 @@ final class LedgerStore: ObservableObject {
             readiness = .needsRecovery
             return
         }
-        let targetContainsAllLegacy = legacyRecords.allSatisfy { targetRecords.contains($0) }
+        // Compare by original fields, not full `Expense` equality: a retained
+        // legacy copy may lack the consumption day that the live copy already
+        // persisted. Treating that backfill-only difference as a new record
+        // would import the same UUID twice after a failed cleanup.
+        let targetContainsAllLegacy = legacyRecords.allSatisfy { legacy in
+            targetRecords.contains { $0.hasSameOriginalFields(as: legacy) }
+        }
         if targetContainsAllLegacy {
             // This target snapshot was decoded and confirmed to hold every
             // legacy record; it is the complete ledger migration validated.
@@ -541,15 +678,22 @@ final class LedgerStore: ObservableObject {
         // legacy expenses). Merge both copies into one snapshot and commit it
         // atomically before accounting opens.
         var merged = targetRecords
-        for record in legacyRecords where !merged.contains(record) {
+        // Skip a legacy record whose original fields already exist in the
+        // merge (e.g. the live copy's backfilled twin). Keep the live copy's
+        // persisted consumption day rather than appending a second copy.
+        for record in legacyRecords where !merged.contains(where: { $0.hasSameOriginalFields(as: record) }) {
             merged.append(record)
         }
         do {
             try commit(merged)
             let committedData = try Data(contentsOf: fileURL)
             let committedRecords = try JSONDecoder().decode([Expense].self, from: committedData)
-            guard legacyRecords.allSatisfy({ committedRecords.contains($0) }),
-                  targetRecords.allSatisfy({ committedRecords.contains($0) }) else {
+            guard legacyRecords.allSatisfy({ legacy in
+                    committedRecords.contains { $0.hasSameOriginalFields(as: legacy) }
+                  }),
+                  targetRecords.allSatisfy({ target in
+                    committedRecords.contains { $0.hasSameOriginalFields(as: target) }
+                  }) else {
                 throw LedgerStoreError.migrationVerificationFailed
             }
             // The published, re-read snapshot is the complete ledger. Startup
@@ -860,5 +1004,233 @@ final class CategoryStore: ObservableObject {
         guard actual.isExcludedFromBackup == true else {
             throw LedgerStoreError.backupExclusionFailed
         }
+    }
+}
+
+// MARK: - Issue 04: historical amounts store
+
+/// Owns the month-level historical summaries and the opening balance the user
+/// enters because the old app could not export a ledger. Like the ledger and
+/// the category tree, the file lives in the app's own backup-excluded directory
+/// on this device. Each save is a protected staging write followed by one
+/// atomic publish, so a failed protection or verification never leaves disk
+/// and memory disagreeing.
+final class HistoryStore: ObservableObject {
+    @Published private(set) var snapshot = HistorySnapshot()
+    /// True when a history file exists but cannot be read or decoded. The
+    /// original bytes are preserved and every write is blocked.
+    @Published private(set) var isUnreadable = false
+    /// True when an observed history file could not be confirmed
+    /// backup-excluded at either the directory or the file level.
+    @Published private(set) var isProtectionUnconfirmed = false
+    /// History cannot be trusted: unreadable, or protection unconfirmed.
+    /// Totals that include history must be shown as unavailable, and writes
+    /// are blocked, so incomplete or unprotected data never looks complete.
+    var isUnavailable: Bool { isUnreadable || isProtectionUnconfirmed }
+    /// Text shown wherever a history-dependent total would otherwise appear.
+    static let unavailableText = "历史不可用"
+    /// Set by the app to the per-record ledger's trust state. An opening
+    /// balance represents every expense through its cutoff, so it must not be
+    /// saved while the ledger is unrecovered and those records may be
+    /// unloaded. Nil in isolated history-only tests (no ledger gate).
+    var openingBalanceAllowed: (() -> Bool)?
+
+    private let fileURL: URL
+    private let backupExclusionOverride: ((URL) throws -> Void)?
+    private let finalPublishFailure: (() -> Error?)?
+    private let readHistoryFile: ((URL) throws -> Data)?
+
+    static var defaultFileURL: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return support.appendingPathComponent("PayLedger", isDirectory: true)
+            .appendingPathComponent("history.json")
+    }
+
+    /// DEBUG-only isolated path derived from the already-validated test ledger
+    /// URL, so a restart with the same ledger reuses the same history. The
+    /// `history-` prefix is never accepted as a ledger name, keeping all test
+    /// files mutually independent and away from production paths.
+    static func testFileURL(environment: [String: String]) -> URL? {
+        #if DEBUG
+        guard let ledgerURL = PayLedgerApp.ledgerFileURL(environment: environment) else { return nil }
+        let stem = ledgerURL.deletingPathExtension().lastPathComponent
+        return ledgerURL.deletingLastPathComponent()
+            .appendingPathComponent("history-\(stem).json")
+        #else
+        return nil
+        #endif
+    }
+
+    init(fileURL: URL? = nil,
+         backupExclusion: ((URL) throws -> Void)? = nil,
+         finalPublishFailure: (() -> Error?)? = nil,
+         readHistoryFile: ((URL) throws -> Data)? = nil) {
+        self.fileURL = fileURL ?? Self.defaultFileURL
+        self.backupExclusionOverride = backupExclusion
+        self.finalPublishFailure = finalPublishFailure
+        self.readHistoryFile = readHistoryFile
+
+        let fm = FileManager.default
+        let directory = self.fileURL.deletingLastPathComponent()
+        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Directory exclusion is attempted first; the file-level attempt
+        // below is independent, so a failed directory marker never skips it.
+        let directoryProtected = (try? applyBackupExclusion(to: directory)) != nil
+
+        let data: Data?
+        do {
+            data = try readHistoryData(at: self.fileURL)
+        } catch {
+            // Only a definite missing file is a first run. Any other read
+            // failure leaves a possible live file unconfirmed, so writes block.
+            if Self.isMissingFileError(error) { return }
+            data = nil
+            isUnreadable = true
+        }
+
+        // A file that was observed to exist gets its own, verified backup
+        // exclusion — including on read/decode failures — so the original
+        // bytes stay protected on this device no matter what went wrong.
+        if data != nil || isUnreadable {
+            let fileProtected = (try? applyBackupExclusion(to: self.fileURL)) != nil
+            if !directoryProtected && !fileProtected {
+                isProtectionUnconfirmed = true
+            }
+        }
+
+        guard let data, !isUnreadable else { return }
+        do {
+            let decoded = try JSONDecoder().decode(HistorySnapshot.self, from: data)
+            // Decoding alone only proves the JSON is structurally valid. A
+            // snapshot with duplicate months, an out-of-range period, a
+            // negative amount or a bad cutoff would silently corrupt month
+            // and year totals, so reject it exactly like an unreadable file:
+            // keep the original bytes, publish nothing, and block all writes.
+            guard decoded.isValid else {
+                isUnreadable = true
+                return
+            }
+            snapshot = decoded
+        } catch {
+            isUnreadable = true
+        }
+    }
+
+    /// Adds or replaces one historical month. Keying by (year, month) makes a
+    /// repeated save replace the value instead of adding a second summary that
+    /// would be counted twice.
+    func setHistoricalMonth(year: Int, month: Int, amountCents: Int) throws {
+        // A historical month total may be zero (no pre-enablement spend), but
+        // never negative. Only per-record expenses require a positive amount.
+        guard amountCents >= 0, HistoryInput.isValidHistoricalMonth(year: year, month: month) else {
+            throw LedgerStoreError.invalidHistoryInput
+        }
+        var updated = snapshot
+        let item = HistoricalMonth(year: year, month: month, amountCents: amountCents)
+        if let index = updated.monthlySummaries.firstIndex(where: { $0.key == item.key }) {
+            updated.monthlySummaries[index] = item
+        } else {
+            updated.monthlySummaries.append(item)
+        }
+        updated.monthlySummaries.sort { ($0.year, $0.month) < ($1.year, $1.month) }
+        try persistAndPublish(updated)
+    }
+
+    /// Sets (or replaces) the single opening balance. Re-saving never creates
+    /// a second cumulative entry. The cutoff is stored as validated calendar
+    /// components; the enablement day is the following calendar day.
+    func setOpeningBalance(amountCents: Int, cutoffYear: Int,
+                           cutoffMonth: Int, cutoffDay: Int) throws {
+        // The covered record set is unknown while the per-record ledger is
+        // unrecovered; saving an opening now would silently exclude records
+        // that reappear after recovery.
+        if let allowed = openingBalanceAllowed, !allowed() {
+            throw LedgerStoreError.openingBalancePausedForRecovery
+        }
+        // A zero opening balance is valid; negatives are still rejected.
+        guard amountCents >= 0,
+              HistoryInput.isValidOpeningCutoff(year: cutoffYear, month: cutoffMonth, day: cutoffDay) else {
+            throw LedgerStoreError.invalidHistoryInput
+        }
+        var updated = snapshot
+        updated.openingBalance = OpeningBalance(amountCents: amountCents,
+                                                cutoffYear: cutoffYear,
+                                                cutoffMonth: cutoffMonth,
+                                                cutoffDay: cutoffDay)
+        try persistAndPublish(updated)
+    }
+
+    /// Convenience for callers holding a Date: components are read in the
+    /// ledger calendar, then validated and stored by the primary setter.
+    func setOpeningBalance(amountCents: Int, cutoffDate: Date) throws {
+        let parts = LedgerStats.calendar.dateComponents([.year, .month, .day], from: cutoffDate)
+        try setOpeningBalance(amountCents: amountCents, cutoffYear: parts.year ?? 0,
+                              cutoffMonth: parts.month ?? 0, cutoffDay: parts.day ?? 0)
+    }
+
+    private func persistAndPublish(_ updated: HistorySnapshot) throws {
+        guard !isUnavailable else {
+            throw isUnreadable
+                ? LedgerStoreError.unreadableHistory
+                : LedgerStoreError.historyProtectionUnconfirmed
+        }
+        try persist(updated)
+        snapshot = updated
+    }
+
+    private func persist(_ snapshot: HistorySnapshot) throws {
+        let data = try JSONEncoder().encode(snapshot)
+        let directory = fileURL.deletingLastPathComponent()
+        let staging = directory.appendingPathComponent(Self.stagingFileName)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        do {
+            try applyBackupExclusion(to: directory)
+            try data.write(to: staging, options: .atomic)
+            try applyBackupExclusion(to: staging)
+            guard try Data(contentsOf: staging) == data else {
+                throw LedgerStoreError.writeVerificationFailed
+            }
+            if let finalPublishFailure, let failure = finalPublishFailure() {
+                throw failure
+            }
+            guard rename(staging.path, fileURL.path) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: nil)
+            }
+        } catch {
+            if let storeError = error as? LedgerStoreError { throw storeError }
+            throw LedgerStoreError.writeFailed(underlying: error)
+        }
+    }
+
+    private func readHistoryData(at url: URL) throws -> Data {
+        if let readHistoryFile { return try readHistoryFile(url) }
+        return try Data(contentsOf: url)
+    }
+
+    private static func isMissingFileError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return (nsError.domain == NSCocoaErrorDomain &&
+                (nsError.code == CocoaError.Code.fileNoSuchFile.rawValue ||
+                 nsError.code == CocoaError.Code.fileReadNoSuchFile.rawValue)) ||
+               (nsError.domain == NSPOSIXErrorDomain && nsError.code == ENOENT)
+    }
+
+    private func applyBackupExclusion(to url: URL) throws {
+        if let backupExclusionOverride {
+            try backupExclusionOverride(url)
+        } else {
+            var excluded = URLResourceValues()
+            excluded.isExcludedFromBackup = true
+            var mutableURL = url
+            try mutableURL.setResourceValues(excluded)
+        }
+        let actual = try url.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        guard actual.isExcludedFromBackup == true else {
+            throw LedgerStoreError.backupExclusionFailed
+        }
+    }
+
+    private static var stagingFileName: String {
+        ".history-staging-\(UUID().uuidString).tmp"
     }
 }

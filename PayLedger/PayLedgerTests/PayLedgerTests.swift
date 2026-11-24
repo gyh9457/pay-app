@@ -31,6 +31,22 @@ final class PayLedgerTests: XCTestCase {
         }
     }
 
+    /// 规格 (Codex 7973a7c0): a historical total or opening balance may be
+    /// zero (a user who had no spend before enablement). Parsing zero is
+    /// opt-in so the per-record entry form still rejects 0.00; negatives and
+    /// invalid input stay rejected in both modes.
+    func testHistoryAmountParserAllowsZeroOnlyWhenRequested() {
+        XCTAssertEqual(AmountInput.parseCents("0", allowZero: true), 0)
+        XCTAssertEqual(AmountInput.parseCents("0.00", allowZero: true), 0)
+        XCTAssertEqual(AmountInput.parseCents("0,00", allowZero: true), 0)
+        XCTAssertEqual(AmountInput.parseCents("12.34", allowZero: true), 1234)
+        // Per-record default and negatives remain rejected even with opt-in.
+        XCTAssertNil(AmountInput.parseCents("0"))
+        XCTAssertNil(AmountInput.parseCents("0.00"))
+        XCTAssertNil(AmountInput.parseCents("-1", allowZero: true))
+        XCTAssertNil(AmountInput.parseCents("abc", allowZero: true))
+    }
+
     func testAmountParserAcceptsLeadingSeparatorAndCommaDecimal() {
         // A native decimal pad lets the user start at the separator, and a
         // decimal-comma locale emits "," instead of ".". The integer part is
@@ -170,15 +186,18 @@ final class PayLedgerTests: XCTestCase {
 
         let expenses = [
             Expense(amountCents: 1234, categoryID: "food",
-                    date: cal.date(from: DateComponents(year: 2026, month: 11, day: 2, hour: 12))!),
+                    date: cal.date(from: DateComponents(year: 2026, month: 11, day: 2, hour: 12))!,
+                    consumptionDay: ConsumptionDay(year: 2026, month: 11, day: 2)),
             Expense(amountCents: 500, categoryID: "transport",
-                    date: cal.date(from: DateComponents(year: 2026, month: 11, day: 30, hour: 9))!),
+                    date: cal.date(from: DateComponents(year: 2026, month: 11, day: 30, hour: 9))!,
+                    consumptionDay: ConsumptionDay(year: 2026, month: 11, day: 30)),
             // Exactly at the end boundary — must not be counted.
             Expense(amountCents: 9999, categoryID: "food",
-                    date: cal.date(from: DateComponents(year: 2026, month: 12, day: 1, hour: 0))!)
+                    date: cal.date(from: DateComponents(year: 2026, month: 12, day: 1, hour: 0))!,
+                    consumptionDay: ConsumptionDay(year: 2026, month: 12, day: 1))
         ]
 
-        XCTAssertEqual(LedgerStats.totalCents(expenses, in: interval), 1734)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, in: interval, calendar: cal), 1734)
     }
 
     func testWeekIntervalStartsOnMonday() {
@@ -887,13 +906,17 @@ final class PayLedgerTests: XCTestCase {
         // masquerade the capped value as a real total.
         let expenses = [
             Expense(amountCents: Int.max, categoryID: "food",
-                    date: Date(timeIntervalSinceReferenceDate: 10)),
+                    date: Date(timeIntervalSinceReferenceDate: 10),
+                    consumptionDay: ConsumptionDay(year: 2001, month: 1, day: 1)),
             Expense(amountCents: 1, categoryID: "transport",
-                    date: Date(timeIntervalSinceReferenceDate: 20))
+                    date: Date(timeIntervalSinceReferenceDate: 20),
+                    consumptionDay: ConsumptionDay(year: 2001, month: 1, day: 1))
         ]
-        XCTAssertNil(LedgerStats.totalCents(expenses, in: interval),
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        XCTAssertNil(LedgerStats.totalCents(expenses, in: interval, calendar: utc),
                      "an overflowing total is reported as out of range, not capped")
-        XCTAssertEqual(LedgerStats.totalCents([expenses[0]], in: interval), Int.max,
+        XCTAssertEqual(LedgerStats.totalCents([expenses[0]], in: interval, calendar: utc), Int.max,
                        "an individually representable amount still returns its exact total")
     }
 
@@ -1222,6 +1245,131 @@ final class PayLedgerTests: XCTestCase {
                        "no extra ledger file may appear in the production directory")
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: legacyDir.path).count, 1,
                        "no extra ledger file may appear in the legacy directory")
+    }
+
+    // MARK: - Codex a0e26112 规范 2: host unit tests use isolated stores
+
+    /// A unit-test host launches the real app entry with XCTestConfigurationFilePath
+    /// set and no PAYLEDGER_TEST_* override. All three stores — ledger, categories
+    /// and history — must resolve to isolated example files, and neither the
+    /// production nor the legacy path may be read, written, marked or deleted.
+    func testUnitTestHostEntryIsolatesAllThreeStoresFromProduction() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("host-isolation-\(UUID().uuidString)", isDirectory: true)
+        let prodDir = root.appendingPathComponent("production", isDirectory: true)
+        let legacyDir = root.appendingPathComponent("legacy", isDirectory: true)
+        try fm.createDirectory(at: prodDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let prodLedger = prodDir.appendingPathComponent("ledger.json")
+        let prodCategories = prodDir.appendingPathComponent("categories.json")
+        let prodHistory = prodDir.appendingPathComponent("history.json")
+        let legacyLedger = legacyDir.appendingPathComponent("ledger.json")
+        let sentinel = Data("sentinel example bytes".utf8)
+        for url in [prodLedger, prodCategories, prodHistory, legacyLedger] {
+            try sentinel.write(to: url)
+        }
+        let urls = [prodDir, prodLedger, prodCategories, prodHistory, legacyDir, legacyLedger]
+        let beforeBytes = urls.map { try? Data(contentsOf: $0) }
+        let beforeExcluded = urls.map {
+            try? $0.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup
+        }
+
+        // The host-test routes use one fixed isolated set; start clean so the
+        // example assertions do not inherit a previous run's ledger.
+        let testDir = fm.temporaryDirectory
+            .appendingPathComponent("PayLedgerUITests", isDirectory: true)
+        let hostLedger = testDir.appendingPathComponent("uitest-unithost.json")
+        let hostCategories = testDir.appendingPathComponent("categories-uitest-unithost.json")
+        let hostHistory = testDir.appendingPathComponent("history-uitest-unithost.json")
+        for url in [hostLedger, hostCategories, hostHistory] { try? fm.removeItem(at: url) }
+        defer {
+            for url in [hostLedger, hostCategories, hostHistory] { try? fm.removeItem(at: url) }
+        }
+
+        // No PAYLEDGER_TEST_* override: this is exactly how a unit-test host
+        // reaches the real app entry.
+        let hostEnvironment = ["XCTestConfigurationFilePath": "/tmp/example.xctestconfiguration"]
+        let stores = PayLedgerApp.makeStores(
+            environment: hostEnvironment,
+            productionFileURL: prodLedger,
+            legacyFileURL: legacyLedger,
+            categoryFileURL: prodCategories,
+            historyFileURL: prodHistory)
+
+        // Neither production path is read, written, marked or migrated.
+        for (index, url) in urls.enumerated() {
+            XCTAssertEqual(try? Data(contentsOf: url), beforeBytes[index],
+                           "host launch must not touch \(url.lastPathComponent)")
+            let after = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup
+            XCTAssertEqual(after, beforeExcluded[index],
+                           "host launch must not change attributes on \(url.lastPathComponent)")
+        }
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: prodDir.path).count, 3,
+                       "no extra file may appear in the production directory")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: legacyDir.path).count, 1,
+                       "the legacy copy must neither be removed nor duplicated")
+
+        // All three stores are functional on their isolated example files.
+        XCTAssertTrue(stores.ledger.expenses.isEmpty)
+        XCTAssertEqual(stores.ledger.readiness, .ready)
+        XCTAssertFalse(stores.categories.isUnreadable,
+                       "categories did not read the production sentinel")
+        XCTAssertFalse(stores.history.isUnreadable,
+                       "history did not read the production sentinel")
+        try stores.ledger.addExpense(amountCents: 1234, categoryID: "food")
+        XCTAssertEqual(stores.ledger.expenses.map(\.amountCents), [1234])
+        XCTAssertTrue(fm.fileExists(atPath: hostLedger.path),
+                      "the example ledger lives in the isolated test directory")
+    }
+
+    /// A normal on-device launch still resolves to the supplied production
+    /// paths (and runs legacy migration), so isolating test hosts did not
+    /// change shipped behaviour.
+    func testNormalLaunchEntryStillUsesProductionPathsAndMigratesLegacy() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("normal-launch-\(UUID().uuidString)", isDirectory: true)
+        let prodDir = root.appendingPathComponent("production", isDirectory: true)
+        let legacyDir = root.appendingPathComponent("legacy", isDirectory: true)
+        try fm.createDirectory(at: prodDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let prodLedger = prodDir.appendingPathComponent("ledger.json")
+        let prodCategories = prodDir.appendingPathComponent("categories.json")
+        let prodHistory = prodDir.appendingPathComponent("history.json")
+        let legacyLedger = legacyDir.appendingPathComponent("ledger.json")
+        try JSONEncoder().encode(
+            [Expense(amountCents: 1234, categoryID: "food", date: Date())]
+        ).write(to: prodLedger)
+        try JSONEncoder().encode(
+            [Expense(amountCents: 8765, categoryID: "transport", date: Date())]
+        ).write(to: legacyLedger)
+        let sentinel = Data("sentinel example bytes".utf8)
+        try sentinel.write(to: prodCategories)
+        try sentinel.write(to: prodHistory)
+
+        // No XCTestConfigurationFilePath and no test override: a real launch.
+        let stores = PayLedgerApp.makeStores(
+            environment: [:],
+            productionFileURL: prodLedger,
+            legacyFileURL: legacyLedger,
+            categoryFileURL: prodCategories,
+            historyFileURL: prodHistory)
+
+        XCTAssertEqual(stores.ledger.expenses.map(\.amountCents).sorted(), [1234, 8765],
+                       "a normal launch reads the production ledger and migrates the legacy copy")
+        XCTAssertFalse(fm.fileExists(atPath: legacyLedger.path),
+                       "a successful normal-launch migration removes the legacy copy")
+        XCTAssertTrue(stores.categories.isUnreadable,
+                      "a normal launch reads its production category file")
+        XCTAssertTrue(stores.history.isUnreadable,
+                      "a normal launch reads its production history file")
+        XCTAssertEqual(try Data(contentsOf: prodCategories), sentinel)
+        XCTAssertEqual(try Data(contentsOf: prodHistory), sentinel)
     }
 
     // MARK: - Codex decision: recovery state (paused vs cleanup-only)
@@ -2444,6 +2592,929 @@ final class PayLedgerTests: XCTestCase {
         let group = LedgerStats.weekCategoryGroups(expenses, in: interval).first
         XCTAssertNil(LedgerStats.sumCents(group?.expenses ?? []))
         XCTAssertNil(LedgerStats.totalCents(expenses, in: interval))
+    }
+}
+
+// MARK: - Issue 04: historical summaries and opening balance (example amounts only)
+
+private extension PayLedgerTests {
+    func historyURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("history-\(UUID().uuidString).json")
+    }
+}
+
+extension PayLedgerTests {
+    func testMonthlyHistoryAndOpeningBalanceCountInMonthAndYearOnlyOnce() {
+        let history = HistorySnapshot(
+            monthlySummaries: [
+                HistoricalMonth(year: 2026, month: 9, amountCents: 3000),
+                HistoricalMonth(year: 2026, month: 10, amountCents: 4000),
+            ],
+            openingBalance: OpeningBalance(amountCents: 5000, cutoffDate: exampleDate(2026, 11, 15)))
+        let expenses = [
+            Expense(amountCents: 1234, categoryID: "food", date: exampleDate(2026, 11, 16)),
+            Expense(amountCents: 8765, categoryID: "transport", date: exampleDate(2026, 11, 30)),
+        ]
+        let november = LedgerStats.monthInterval(containing: exampleDate(2026, 11, 15))!
+        let october = LedgerStats.monthInterval(containing: exampleDate(2026, 10, 15))!
+        let year = LedgerStats.yearInterval(containing: exampleDate(2026, 6, 15))!
+        let week = LedgerStats.weekInterval(containing: exampleDate(2026, 11, 18))!
+
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: november), 5000 + 1234 + 8765)
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: october), 4000)
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: year),
+                       3000 + 4000 + 5000 + 1234 + 8765)
+        // The opening balance is one cumulative value, never repeated per week.
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: week), 1234)
+    }
+
+    func testOpeningBalanceUsesCutoffMonthAndKeepsDayAndWeekPerRecordOnly() {
+        let history = HistorySnapshot(
+            openingBalance: OpeningBalance(amountCents: 5000, cutoffDate: exampleDate(2026, 11, 15)))
+        let expenses = [
+            Expense(amountCents: 100, categoryID: "food", date: exampleDate(2026, 11, 15, hour: 8)),
+            Expense(amountCents: 200, categoryID: "food", date: exampleDate(2026, 11, 16, hour: 8)),
+            Expense(amountCents: 300, categoryID: "food", date: exampleDate(2026, 11, 30, hour: 8)),
+        ]
+        let november = LedgerStats.monthInterval(containing: exampleDate(2026, 11, 15))!
+        let dayBefore = LedgerStats.dayInterval(containing: exampleDate(2026, 11, 15))!
+        let enablementDay = LedgerStats.dayInterval(containing: exampleDate(2026, 11, 16))!
+        let monthEnd = LedgerStats.dayInterval(containing: exampleDate(2026, 11, 30))!
+
+        // 规格 2: the 11-15 record falls on/before the cutoff, so it is part of
+        // the opening period. It stays in the ledger but is excluded from the
+        // month total and from every per-record day/week surface. Only 11-16
+        // (the enablement day) and 11-30 still count as per-record expense.
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: november), 5000 + 200 + 300)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, history: history, in: dayBefore), 0)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, history: history, in: enablementDay), 200)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, history: history, in: monthEnd), 300)
+        // Day/week totals never include history even via the period helper.
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: dayBefore), 0)
+    }
+
+    func testWeekDailyAndCategorySubtotalsExcludeHistory() {
+        let history = HistorySnapshot(
+            monthlySummaries: [HistoricalMonth(year: 2026, month: 11, amountCents: 9000)],
+            openingBalance: OpeningBalance(amountCents: 5000, cutoffDate: exampleDate(2026, 11, 15)))
+        let expenses = [
+            Expense(amountCents: 1234, categoryID: "food", date: exampleDate(2026, 11, 17)),
+            Expense(amountCents: 665, categoryID: "food", date: exampleDate(2026, 11, 22)),
+        ]
+        let week = LedgerStats.weekInterval(containing: exampleDate(2026, 11, 18))!
+        // A week containing the 1st must still not inherit that month's history.
+        let weekContainingFirst = LedgerStats.weekInterval(containing: exampleDate(2026, 11, 1))!
+        let groups = LedgerStats.weekCategoryGroups(expenses, in: week)
+        XCTAssertEqual(LedgerStats.sumCents(groups.first?.expenses ?? []), 1899)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, in: week), 1899)
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: weekContainingFirst), 0)
+    }
+
+    /// Codex 7973a7c0 规格: a whole month whose local day starts after
+    /// midnight because of a DST jump must still include its historical
+    /// summary. In America/Asuncion 2023-10 starts at 01:00, so the old
+    /// hardcoded 00:00 guard dropped the 40.00 history from the month subtotal
+    /// while the year still counted it. Day/week windows must stay per-record.
+    func testWholeMonthHistoryIncludedWhenMonthStartsAfterMidnightDueToDST() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.firstWeekday = 2
+        cal.timeZone = TimeZone(identifier: "America/Asuncion")!
+        let history = HistorySnapshot(
+            monthlySummaries: [HistoricalMonth(year: 2023, month: 10, amountCents: 4000)],
+            openingBalance: nil)
+        let october = cal.dateInterval(
+            of: .month, for: cal.date(from: DateComponents(year: 2023, month: 10, day: 15))!)!
+        let year = cal.dateInterval(
+            of: .year, for: cal.date(from: DateComponents(year: 2023, month: 6, day: 15))!)!
+        let dayOnFirst = cal.dateInterval(
+            of: .day, for: cal.date(from: DateComponents(year: 2023, month: 10, day: 1, hour: 12))!)!
+        let weekContainingFirst = cal.dateInterval(
+            of: .weekOfYear, for: cal.date(from: DateComponents(year: 2023, month: 10, day: 1, hour: 12))!)!
+
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: history, in: october, calendar: cal), 4000)
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: history, in: year, calendar: cal), 4000)
+        // A wrongly passed day/week interval must not inherit the month summary.
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: history, in: dayOnFirst, calendar: cal), 0)
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: history, in: weekContainingFirst, calendar: cal), 0)
+    }
+
+    /// f17d77a2 规格: an unavailable history file only invalidates a bill total
+    /// when that interval could actually contain a historical amount. Monthly
+    /// summaries are before 2026-11 and the opening cutoff is a 2026-11 day,
+    /// so nothing can fall on or after 2026-12-01.
+    func testHistoryAffectsOnlyIntervalsStartingBeforeDecember2026() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.firstWeekday = 2
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        func month(_ y: Int, _ m: Int) -> DateInterval {
+            cal.dateInterval(of: .month, for: cal.date(from: DateComponents(year: y, month: m, day: 15))!)!
+        }
+        func year(_ y: Int) -> DateInterval {
+            cal.dateInterval(of: .year, for: cal.date(from: DateComponents(year: y, month: 6, day: 1))!)!
+        }
+
+        XCTAssertTrue(LedgerStats.historyAffects(month(2026, 11), calendar: cal),
+                      "2026-11 月初累计归属月受影响")
+        XCTAssertTrue(LedgerStats.historyAffects(year(2026), calendar: cal),
+                      "2026 全年含期初与 10 月历史，受影响")
+        XCTAssertTrue(LedgerStats.historyAffects(year(2025), calendar: cal),
+                      "更早年份可能有月度历史汇总，受影响")
+        XCTAssertFalse(LedgerStats.historyAffects(month(2026, 12), calendar: cal),
+                       "2026-12 起整月在最晚启用日之后，不受影响")
+        XCTAssertFalse(LedgerStats.historyAffects(month(2027, 1), calendar: cal))
+        XCTAssertFalse(LedgerStats.historyAffects(year(2027), calendar: cal),
+                       "2027 年起整年不受影响")
+        XCTAssertFalse(LedgerStats.historyAffects(year(2028), calendar: cal))
+    }
+
+    func testHistorySaveIsIdempotentAndSurvivesRestart() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = HistoryStore(fileURL: url)
+        try store.setHistoricalMonth(year: 2026, month: 10, amountCents: 4000)
+        try store.setHistoricalMonth(year: 2026, month: 10, amountCents: 4000)
+        try store.setOpeningBalance(amountCents: 5000, cutoffDate: exampleDate(2026, 11, 15))
+        try store.setOpeningBalance(amountCents: 5000, cutoffDate: exampleDate(2026, 11, 15))
+
+        XCTAssertEqual(store.snapshot.monthlySummaries.count, 1)
+        XCTAssertEqual(store.snapshot.monthlySummaries.first?.amountCents, 4000)
+        XCTAssertEqual(store.snapshot.openingBalance?.amountCents, 5000)
+
+        let reopened = HistoryStore(fileURL: url)
+        XCTAssertEqual(reopened.snapshot.monthlySummaries.count, 1)
+        XCTAssertEqual(reopened.snapshot.monthlySummaries.first?.amountCents, 4000)
+        XCTAssertEqual(reopened.snapshot.openingBalance?.amountCents, 5000)
+
+        let november = LedgerStats.monthInterval(containing: exampleDate(2026, 11, 15))!
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: reopened.snapshot, in: november), 5000)
+        XCTAssertEqual(LedgerStats.historicalMonths(in: november, from: reopened.snapshot).count, 0)
+    }
+
+    /// 规格 (Codex 7973a7c0): historical month summaries and the opening
+    /// balance may be zero; negatives are still rejected. Repeated saves of a
+    /// zero segment replace the value instead of accumulating, and the zero
+    /// values survive a restart and count once in month/year totals.
+    func testZeroHistoryAmountsAreAcceptedReplacedAndSurviveRestart() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = HistoryStore(fileURL: url)
+
+        // Negative amounts are still rejected for both history inputs.
+        XCTAssertThrowsError(try store.setHistoricalMonth(year: 2026, month: 10, amountCents: -1))
+        XCTAssertThrowsError(try store.setOpeningBalance(amountCents: -1, cutoffDate: exampleDate(2026, 11, 15)))
+        XCTAssertTrue(store.snapshot.monthlySummaries.isEmpty)
+        XCTAssertNil(store.snapshot.openingBalance)
+
+        // Zero is accepted; saving the same zero segment again replaces it.
+        try store.setHistoricalMonth(year: 2026, month: 10, amountCents: 0)
+        try store.setHistoricalMonth(year: 2026, month: 10, amountCents: 0)
+        try store.setOpeningBalance(amountCents: 0, cutoffDate: exampleDate(2026, 11, 15))
+        try store.setOpeningBalance(amountCents: 0, cutoffDate: exampleDate(2026, 11, 15))
+
+        XCTAssertEqual(store.snapshot.monthlySummaries.count, 1)
+        XCTAssertEqual(store.snapshot.monthlySummaries.first?.amountCents, 0)
+        XCTAssertEqual(store.snapshot.openingBalance?.amountCents, 0)
+        XCTAssertTrue(store.snapshot.isValid)
+
+        let reopened = HistoryStore(fileURL: url)
+        XCTAssertEqual(reopened.snapshot.monthlySummaries.count, 1)
+        XCTAssertEqual(reopened.snapshot.monthlySummaries.first?.amountCents, 0)
+        XCTAssertEqual(reopened.snapshot.openingBalance?.amountCents, 0)
+
+        // Zero history counts once (as zero) in month/year, never double.
+        let october = LedgerStats.monthInterval(containing: exampleDate(2026, 10, 15))!
+        let november = LedgerStats.monthInterval(containing: exampleDate(2026, 11, 15))!
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: reopened.snapshot, in: october), 0)
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: reopened.snapshot, in: november), 0)
+    }
+
+    /// 规范 (Codex f17d77a2): the opening balance represents every per-record
+    /// expense through its cutoff. While the per-record ledger is unrecovered
+    /// those records may be unloaded, so the opening balance must not be
+    /// written or replaced (the covered set is unknown). Historical monthly
+    /// summaries are independent and stay writable.
+    func testOpeningBalanceBlockedWhileLedgerNeedsRecovery() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var ledgerRecovered = false
+        let store = HistoryStore(fileURL: url)
+        store.openingBalanceAllowed = { ledgerRecovered }
+
+        // A monthly summary needs no per-record data and stays independent.
+        try store.setHistoricalMonth(year: 2026, month: 10, amountCents: 4000)
+        XCTAssertEqual(store.snapshot.monthlySummaries.first?.amountCents, 4000)
+
+        XCTAssertThrowsError(
+            try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2026,
+                                        cutoffMonth: 11, cutoffDay: 15)
+        ) { error in
+            guard case LedgerStoreError.openingBalancePausedForRecovery = error else {
+                return XCTFail("期望恢复暂停错误，实际为 \(error)")
+            }
+        }
+        XCTAssertNil(store.snapshot.openingBalance, "恢复前不得写入期初累计")
+        let beforeRecovery = try Data(contentsOf: url)
+        XCTAssertNil(try JSONDecoder().decode(HistorySnapshot.self, from: beforeRecovery).openingBalance,
+                     "恢复前不应把期初累计落盘")
+
+        // Once the ledger is recovered, the opening balance can be saved.
+        ledgerRecovered = true
+        try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2026,
+                                    cutoffMonth: 11, cutoffDay: 15)
+        XCTAssertEqual(store.snapshot.openingBalance?.amountCents, 5000)
+
+        // Replacing an existing opening is blocked again while unrecovered.
+        ledgerRecovered = false
+        XCTAssertThrowsError(
+            try store.setOpeningBalance(amountCents: 6000, cutoffYear: 2026,
+                                        cutoffMonth: 11, cutoffDay: 15)
+        ) { error in
+            guard case LedgerStoreError.openingBalancePausedForRecovery = error else {
+                return XCTFail("期望恢复暂停错误，实际为 \(error)")
+            }
+        }
+        XCTAssertEqual(store.snapshot.openingBalance?.amountCents, 5000, "恢复前不得替换期初累计")
+        let afterReplaceAttempt = try Data(contentsOf: url)
+        XCTAssertEqual(try JSONDecoder().decode(HistorySnapshot.self, from: afterReplaceAttempt)
+            .openingBalance?.amountCents, 5000, "被拒的替换不应改动磁盘")
+    }
+
+    /// 规范 1: a corrupt history file must get an independent, verified
+    /// file-level backup exclusion even when the directory marker fails.
+    /// The original bytes are preserved and every write stays blocked.
+    func testCorruptHistoryFileGetsFileLevelBackupProtectionAndBlocksOverwrite() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let corrupt = Data("broken example history".utf8)
+        try corrupt.write(to: url)
+
+        var attempted: [String] = []
+        let directoryName = url.deletingLastPathComponent().lastPathComponent
+        let store = HistoryStore(fileURL: url, backupExclusion: { target in
+            attempted.append(target.lastPathComponent)
+            if target == url {
+                // File-level protection is available: set the real marker so
+                // the mandatory readback in applyBackupExclusion succeeds.
+                var mutable = target
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try mutable.setResourceValues(values)
+            } else {
+                throw NSError(domain: "test", code: 7) // directory marker fails
+            }
+        })
+
+        XCTAssertTrue(store.isUnreadable)
+        XCTAssertFalse(store.isProtectionUnconfirmed, "file-level marker is sufficient")
+        XCTAssertTrue(store.isUnavailable)
+        XCTAssertEqual(attempted, [directoryName, url.lastPathComponent],
+                       "directory exclusion is attempted before file exclusion")
+        XCTAssertEqual(try Data(contentsOf: url), corrupt)
+        XCTAssertThrowsError(try store.setHistoricalMonth(year: 2026, month: 10, amountCents: 4000)) { error in
+            guard case LedgerStoreError.unreadableHistory = error else {
+                return XCTFail("expected unreadableHistory, got \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: url), corrupt, "a failed save never overwrites the corrupt bytes")
+    }
+
+    /// 规范 1: when neither the directory nor the file backup exclusion can
+    /// be confirmed for an observed history file, the store surfaces an
+    /// unconfirmed-protection state, shows the data as unavailable, and
+    /// refuses every write without touching the original bytes.
+    func testHistoryFileWithoutConfirmableBackupProtectionBlocksWrites() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let seed = HistoryStore(fileURL: url)
+        try seed.setHistoricalMonth(year: 2026, month: 10, amountCents: 4000)
+        let original = try Data(contentsOf: url)
+
+        let store = HistoryStore(fileURL: url, backupExclusion: { _ in
+            throw NSError(domain: "test", code: 7)
+        })
+        XCTAssertFalse(store.isUnreadable)
+        XCTAssertTrue(store.isProtectionUnconfirmed)
+        XCTAssertTrue(store.isUnavailable)
+        XCTAssertEqual(store.snapshot.monthlySummaries.first?.amountCents, 4000)
+        XCTAssertThrowsError(try store.setHistoricalMonth(year: 2026, month: 9, amountCents: 3000)) { error in
+            guard case LedgerStoreError.historyProtectionUnconfirmed = error else {
+                return XCTFail("expected historyProtectionUnconfirmed, got \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: url), original)
+    }
+
+    /// 规范 1: a read failure on an observed history file still attempts the
+    /// independent file-level backup exclusion and keeps the state unreadable.
+    func testHistoryReadFailureStillAttemptsFileLevelBackupExclusion() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("broken example history".utf8).write(to: url)
+        let original = try Data(contentsOf: url)
+
+        var fileAttempted = false
+        let store = HistoryStore(fileURL: url, backupExclusion: { target in
+            if target == url {
+                fileAttempted = true
+                var mutable = target
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try mutable.setResourceValues(values)
+            }
+        }, readHistoryFile: { _ in throw NSError(domain: "test", code: 5) })
+
+        XCTAssertTrue(store.isUnreadable)
+        XCTAssertTrue(fileAttempted, "file-level protection must be attempted on a read failure")
+        XCTAssertFalse(store.isProtectionUnconfirmed, "file-level marker is sufficient")
+        XCTAssertEqual(try Data(contentsOf: url), original)
+    }
+
+    /// 规范 1 (Codex 7973a7c0): structurally valid JSON that decodes into
+    /// values the app could never save must not be published as a complete
+    /// history. Duplicate months, an out-of-range period, an invalid opening
+    /// cutoff and a negative amount all leave the store unreadable, keep the
+    /// original bytes, and refuse every write.
+    func testDecodedHistoryWithInvalidFieldsIsRejectedAndPreserved() throws {
+        let invalidCases: [(String, String)] = [
+            ("duplicate month", #"{"monthlySummaries":[{"year":2026,"month":10,"amountCents":4000},{"year":2026,"month":10,"amountCents":3000}],"openingBalance":null}"#),
+            ("November month", #"{"monthlySummaries":[{"year":2026,"month":11,"amountCents":9000}],"openingBalance":null}"#),
+            ("invalid cutoff month", #"{"monthlySummaries":[],"openingBalance":{"amountCents":5000,"cutoffYear":2026,"cutoffMonth":12,"cutoffDay":15}}"#),
+            ("invalid cutoff day", #"{"monthlySummaries":[],"openingBalance":{"amountCents":5000,"cutoffYear":2026,"cutoffMonth":11,"cutoffDay":31}}"#),
+            ("negative month amount", #"{"monthlySummaries":[{"year":2026,"month":10,"amountCents":-4000}],"openingBalance":null}"#),
+            ("negative opening amount", #"{"monthlySummaries":[],"openingBalance":{"amountCents":-5000,"cutoffYear":2026,"cutoffMonth":11,"cutoffDay":15}}"#),
+        ]
+        for (name, json) in invalidCases {
+            let url = historyURL()
+            let original = Data(json.utf8)
+            try original.write(to: url)
+            defer { try? FileManager.default.removeItem(at: url) }
+
+            let store = HistoryStore(fileURL: url)
+            XCTAssertTrue(store.isUnreadable, "\(name): 语义无效的 JSON 必须被拒绝")
+            XCTAssertTrue(store.isUnavailable, "\(name): 受影响合计必须显示不可用")
+            XCTAssertTrue(store.snapshot.monthlySummaries.isEmpty, "\(name): 不得发布部分或错误快照")
+            XCTAssertNil(store.snapshot.openingBalance, "\(name): 不得发布期初快照")
+            let afterInit = try Data(contentsOf: url)
+            XCTAssertEqual(afterInit, original, "\(name): 原字节保留")
+            XCTAssertThrowsError(try store.setHistoricalMonth(year: 2026, month: 9, amountCents: 3000)) { error in
+                guard case LedgerStoreError.unreadableHistory = error else {
+                    return XCTFail("\(name): expected unreadableHistory, got \(error)")
+                }
+            }
+            let afterSave = try Data(contentsOf: url)
+            XCTAssertEqual(afterSave, original, "\(name): 失败的保存不得覆盖原字节")
+        }
+    }
+
+    /// 规范 1: a semantically invalid but decodable file still gets its own
+    /// verified file-level backup exclusion when the directory marker fails,
+    /// so the originally preserved bytes stay protected on this device.
+    func testSemanticallyInvalidHistoryGetsFileLevelProtectionAndBlocksWrites() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let json = #"{"monthlySummaries":[{"year":2026,"month":10,"amountCents":4000},{"year":2026,"month":10,"amountCents":3000}],"openingBalance":null}"#
+        let original = Data(json.utf8)
+        try original.write(to: url)
+
+        var attempted: [String] = []
+        let directoryName = url.deletingLastPathComponent().lastPathComponent
+        let store = HistoryStore(fileURL: url, backupExclusion: { target in
+            attempted.append(target.lastPathComponent)
+            if target == url {
+                var mutable = target
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try mutable.setResourceValues(values)
+            } else {
+                throw NSError(domain: "test", code: 7) // directory marker fails
+            }
+        })
+
+        XCTAssertTrue(store.isUnreadable)
+        XCTAssertFalse(store.isProtectionUnconfirmed, "file-level marker is sufficient")
+        XCTAssertEqual(attempted, [directoryName, url.lastPathComponent],
+                       "directory exclusion is attempted before file exclusion")
+        let afterInit = try Data(contentsOf: url)
+        XCTAssertEqual(afterInit, original, "原字节保留")
+        XCTAssertThrowsError(try store.setOpeningBalance(amountCents: 5000, cutoffDate: exampleDate(2026, 11, 15)))
+        let afterSave = try Data(contentsOf: url)
+        XCTAssertEqual(afterSave, original, "失败的保存不得覆盖原字节")
+    }
+
+    func testHistoryOverflowReportsOutOfRange() {
+        let history = HistorySnapshot(monthlySummaries: [
+            HistoricalMonth(year: 2026, month: 1, amountCents: Int.max),
+            HistoricalMonth(year: 2026, month: 2, amountCents: 1),
+        ])
+        let year = LedgerStats.yearInterval(containing: exampleDate(2026, 6, 15))!
+        XCTAssertNil(LedgerStats.periodTotalCents([], history: history, in: year))
+    }
+
+    /// 规格 1: whole-month history is accepted only for a valid year-month
+    /// strictly before November 2026. Invalid input keeps the saved snapshot
+    /// untouched and is reported as an error.
+    func testHistoryMonthValidationRejectsNovemberAndLaterAndInvalidDates() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = HistoryStore(fileURL: url)
+
+        XCTAssertThrowsError(try store.setHistoricalMonth(year: 2026, month: 11, amountCents: 9000))
+        XCTAssertThrowsError(try store.setHistoricalMonth(year: 2026, month: 12, amountCents: 9000))
+        XCTAssertThrowsError(try store.setHistoricalMonth(year: 2027, month: 1, amountCents: 9000))
+        XCTAssertThrowsError(try store.setHistoricalMonth(year: 2026, month: 13, amountCents: 9000))
+        XCTAssertThrowsError(try store.setHistoricalMonth(year: 0, month: 10, amountCents: 9000))
+        XCTAssertTrue(store.snapshot.monthlySummaries.isEmpty)
+
+        try store.setHistoricalMonth(year: 2026, month: 10, amountCents: 4000)
+        XCTAssertEqual(store.snapshot.monthlySummaries.count, 1)
+        XCTAssertEqual(store.snapshot.monthlySummaries.first?.amountCents, 4000)
+    }
+
+    /// 规格 1: the opening cutoff must be a real November 2026 calendar day;
+    /// the enablement day is its next calendar day. A wrong month, year, or a
+    /// non-existent day is rejected without changing the snapshot.
+    func testOpeningCutoffValidationRejectsNonNovember2026AndInvalidDays() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = HistoryStore(fileURL: url)
+
+        XCTAssertThrowsError(try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2026, cutoffMonth: 10, cutoffDay: 31))
+        XCTAssertThrowsError(try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2026, cutoffMonth: 12, cutoffDay: 1))
+        XCTAssertThrowsError(try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2025, cutoffMonth: 11, cutoffDay: 30))
+        XCTAssertThrowsError(try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2026, cutoffMonth: 11, cutoffDay: 31))
+        XCTAssertThrowsError(try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2026, cutoffMonth: 11, cutoffDay: 0))
+        XCTAssertNil(store.snapshot.openingBalance)
+
+        try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2026, cutoffMonth: 11, cutoffDay: 1)
+        XCTAssertEqual(store.snapshot.openingBalance?.cutoff.text, "2026-11-01")
+        XCTAssertEqual(store.snapshot.openingBalance?.enableDay.text, "2026-11-02")
+    }
+
+    /// 规格 1: the cutoff is stored as calendar year/month/day, not as a time
+    /// zone dependent instant, so a restart under a different time zone shows
+    /// the same date and still attributes the opening to November 2026 only.
+    func testOpeningCutoffComponentsSurviveTimeZoneChangeAndAttributeToNovember() throws {
+        let url = historyURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = HistoryStore(fileURL: url)
+        try store.setOpeningBalance(amountCents: 5000, cutoffYear: 2026, cutoffMonth: 11, cutoffDay: 1)
+
+        let previousZone = NSTimeZone.default
+        NSTimeZone.default = TimeZone(secondsFromGMT: 14 * 3600)!
+        defer { NSTimeZone.default = previousZone }
+
+        let reopened = HistoryStore(fileURL: url)
+        XCTAssertEqual(reopened.snapshot.openingBalance?.cutoffYear, 2026)
+        XCTAssertEqual(reopened.snapshot.openingBalance?.cutoffMonth, 11)
+        XCTAssertEqual(reopened.snapshot.openingBalance?.cutoffDay, 1)
+        XCTAssertEqual(reopened.snapshot.openingBalance?.cutoff.text, "2026-11-01")
+
+        let november = LedgerStats.monthInterval(containing: exampleDate(2026, 11, 15))!
+        let december = LedgerStats.monthInterval(containing: exampleDate(2026, 12, 15))!
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: reopened.snapshot, in: november), 5000)
+        XCTAssertEqual(LedgerStats.periodTotalCents([], history: reopened.snapshot, in: december), 0)
+    }
+
+    /// 规格 2: per-record data on or before the cutoff stays in the ledger
+    /// file, but is excluded from every summary and bill surface. Example:
+    /// cutoff 11-15, opening 50.00, records 11-15=1.00 / 11-16=2.00 /
+    /// 11-30=3.00, October history 40.00 -> November 55.00, per-record 5.00,
+    /// year 95.00; only the two post-enablement records reach week/month/year
+    /// detail and category subtotals.
+    func testCoveredPerRecordDataIsExcludedFromEveryBillSurfaceButKeptInLedger() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ledger-coverage-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = LedgerStore(fileURL: url)
+        try ledger.addExpense(amountCents: 100, categoryID: "food", date: exampleDate(2026, 11, 15, hour: 8))
+        try ledger.addExpense(amountCents: 200, categoryID: "food", date: exampleDate(2026, 11, 16, hour: 8))
+        try ledger.addExpense(amountCents: 300, categoryID: "transport", date: exampleDate(2026, 11, 30, hour: 8))
+        XCTAssertEqual(ledger.expenses.count, 3, "覆盖时段的逐笔应原样保留在账本中")
+
+        let reopened = LedgerStore(fileURL: url)
+        XCTAssertEqual(reopened.expenses.count, 3, "重启后逐笔数据仍原样保留")
+        let expenses = reopened.expenses
+
+        let history = HistorySnapshot(
+            monthlySummaries: [HistoricalMonth(year: 2026, month: 10, amountCents: 4000)],
+            openingBalance: OpeningBalance(amountCents: 5000, cutoffDate: exampleDate(2026, 11, 15)))
+        let november = LedgerStats.monthInterval(containing: exampleDate(2026, 11, 20))!
+        let year = LedgerStats.yearInterval(containing: exampleDate(2026, 6, 15))!
+        let week = LedgerStats.weekInterval(containing: exampleDate(2026, 11, 16))!
+
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: november), 5500)
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: year), 9500)
+
+        let eligible = LedgerStats.eligibleExpenses(expenses, history: history)
+        XCTAssertEqual(eligible.count, 2)
+        XCTAssertEqual(LedgerStats.sumCents(eligible), 500)
+
+        XCTAssertEqual(LedgerStats.totalCents(expenses, history: history, in: week), 200)
+        let groups = LedgerStats.weekCategoryGroups(expenses, history: history, in: week)
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups.first?.categoryID, "food")
+        XCTAssertEqual(LedgerStats.sumCents(groups.first?.expenses ?? []), 200)
+
+        let days = LedgerStats.monthDays(expenses, history: history, in: november)
+        XCTAssertEqual(days.count, 2)
+        XCTAssertFalse(days.contains { $0.dayKey == "2026-11-15" })
+        XCTAssertEqual(LedgerStats.sumCents(days.flatMap { $0.expenses }), 500)
+
+        let months = LedgerStats.yearMonths(expenses, history: history, in: year)
+        XCTAssertTrue(months.first { $0.key == "2026-10" }?.days.isEmpty ?? false)
+        XCTAssertEqual(LedgerStats.sumCents(months.first { $0.key == "2026-11" }?.days.flatMap { $0.expenses } ?? []), 500)
+    }
+
+    /// Without an opening balance every per-record still counts, so enabling
+    /// history entry cannot change an existing ledger's numbers.
+    func testNoOpeningBalanceKeepsEveryPerRecordInStatistics() {
+        let expenses = [
+            Expense(amountCents: 100, categoryID: "food", date: exampleDate(2026, 11, 15, hour: 8)),
+            Expense(amountCents: 200, categoryID: "food", date: exampleDate(2026, 11, 16, hour: 8)),
+        ]
+        let history = HistorySnapshot(monthlySummaries: [HistoricalMonth(year: 2026, month: 10, amountCents: 4000)])
+        let november = LedgerStats.monthInterval(containing: exampleDate(2026, 11, 20))!
+        let year = LedgerStats.yearInterval(containing: exampleDate(2026, 6, 15))!
+        XCTAssertEqual(LedgerStats.eligibleExpenses(expenses, history: history).count, 2)
+        XCTAssertEqual(LedgerStats.totalCents(expenses, history: history, in: november), 300)
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: november), 300)
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: year), 4300)
+    }
+
+    /// 规格 3: history belongs to the year it was recorded for. With the
+    /// simulated clock moved into 2027, the 2026 year still carries its
+    /// October summary, opening balance and post-enablement records, while
+    /// 2027 carries none of them.
+    func testHistoryStaysInItsOwnYearWhenClockMovesTo2027() {
+        let history = HistorySnapshot(
+            monthlySummaries: [HistoricalMonth(year: 2026, month: 10, amountCents: 3000)],
+            openingBalance: OpeningBalance(amountCents: 5000, cutoffDate: exampleDate(2026, 11, 15)))
+        let expenses = [Expense(amountCents: 1234, categoryID: "food", date: exampleDate(2026, 11, 20))]
+        let year2026 = LedgerStats.yearInterval(containing: exampleDate(2026, 6, 15))!
+        let year2027 = LedgerStats.yearInterval(containing: exampleDate(2027, 6, 15))!
+
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: year2026), 3000 + 5000 + 1234)
+        XCTAssertEqual(LedgerStats.periodTotalCents(expenses, history: history, in: year2027), 0)
+        XCTAssertEqual(LedgerStats.historicalMonths(in: year2026, from: history).map(\.key), ["2026-10"])
+        XCTAssertTrue(LedgerStats.historicalMonths(in: year2027, from: history).isEmpty)
+        XCTAssertEqual(LedgerStats.openingBalance(in: year2026, from: history)?.amountCents, 5000)
+        XCTAssertNil(LedgerStats.openingBalance(in: year2027, from: history))
+    }
+
+    // MARK: - Codex 2002dd5f 规格 1: recorded consumption day
+
+    /// Builds an instant from calendar components in an explicit zone so the
+    /// test does not depend on the device's current time zone.
+    private func instant(_ year: Int, _ month: Int, _ day: Int,
+                         _ hour: Int, _ minute: Int, zone id: String) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: id)!
+        return cal.date(from: DateComponents(year: year, month: month, day: day,
+                                             hour: hour, minute: minute))!
+    }
+
+    private func calendarInZone(_ id: String) -> Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.firstWeekday = 2
+        cal.timeZone = TimeZone(identifier: id)!
+        return cal
+    }
+
+    /// A record made at 23:30 on 11-15 in UTC+8 becomes 11-16 under UTC+9.
+    /// With a stored consumption day it must stay covered (and the 11-16
+    /// 00:15 record stay eligible) in every zone.
+    func testRecordedConsumptionDayStaysExcludedAcrossTimeZones() {
+        let coveredInstant = instant(2026, 11, 15, 23, 30, zone: "Asia/Shanghai")
+        let eligibleInstant = instant(2026, 11, 16, 0, 15, zone: "Asia/Shanghai")
+        let covered = Expense(amountCents: 100, categoryID: "food", date: coveredInstant,
+                              consumptionDay: ConsumptionDay(year: 2026, month: 11, day: 15))
+        let eligible = Expense(amountCents: 200, categoryID: "transport", date: eligibleInstant,
+                               consumptionDay: ConsumptionDay(year: 2026, month: 11, day: 16))
+        let history = HistorySnapshot(
+            openingBalance: OpeningBalance(amountCents: 5000, cutoffYear: 2026,
+                                           cutoffMonth: 11, cutoffDay: 15))
+
+        for zone in ["Asia/Shanghai", "Asia/Tokyo", "UTC"] {
+            let cal = calendarInZone(zone)
+            let result = LedgerStats.eligibleExpenses([covered, eligible],
+                                                      history: history, calendar: cal)
+            XCTAssertEqual(result.map(\.amountCents), [200],
+                           "\(zone): 11-15 的记录即使在 UTC+9 变成次日，也应仍按记录的消费日被期初覆盖")
+
+            // The covered record's bill date resolves to its recorded day in
+            // every calendar, so interval filtering and coverage agree.
+            let parts = cal.dateComponents([.year, .month, .day],
+                                           from: LedgerStats.billDate(of: covered, calendar: cal))
+            XCTAssertEqual([parts.year, parts.month, parts.day], [2026, 11, 15],
+                           "\(zone): 逐笔归属应固定在记账日 11-15")
+        }
+
+        // Month total counts the opening balance and only the post-enablement
+        // record, identically in every zone.
+        for zone in ["Asia/Shanghai", "Asia/Tokyo", "UTC"] {
+            let cal = calendarInZone(zone)
+            let november = cal.dateInterval(of: .month,
+                for: cal.date(from: DateComponents(year: 2026, month: 11, day: 20))!)!
+            XCTAssertEqual(LedgerStats.periodTotalCents([covered, eligible], history: history,
+                                                        in: november, calendar: cal), 5200,
+                           "\(zone): 11 月合计应为期初 50.00 + 启用后 2.00")
+        }
+    }
+
+    /// An old ledger written before consumption days existed has no
+    /// `consumptionDay` key. First load establishes it from the timestamp in
+    /// the device calendar once, and a later restart in another zone keeps it.
+    func testLegacyExpenseWithoutDayIsBackfilledOnceAndStableAcrossTimeZones() throws {
+        let instant = self.instant(2026, 11, 15, 23, 30, zone: "Asia/Shanghai")
+        let legacy = Expense(amountCents: 100, categoryID: "food", date: instant,
+                             consumptionDay: nil)
+        var objects = try JSONSerialization.jsonObject(
+            with: try JSONEncoder().encode([legacy])) as! [[String: Any]]
+        objects[0].removeValue(forKey: "consumptionDay")
+        try JSONSerialization.data(withJSONObject: objects).write(to: fileURL)
+
+        defer { LedgerStats.calendarTimeZoneOverride = nil }
+
+        // First launch under UTC+8: the 23:30 timestamp is recorded as 11-15.
+        LedgerStats.calendarTimeZoneOverride = TimeZone(identifier: "Asia/Shanghai")
+        let first = LedgerStore(fileURL: fileURL)
+        XCTAssertEqual(first.expenses.first?.consumptionDay?.day, 15)
+        XCTAssertEqual(first.expenses.first?.amountCents, 100)
+        XCTAssertEqual(first.expenses.first?.categoryID, "food")
+        XCTAssertEqual(first.expenses.first!.date.timeIntervalSinceReferenceDate,
+                       instant.timeIntervalSinceReferenceDate, accuracy: 0.001)
+
+        // Reopen under UTC+9: the stored 11-15 must not re-derive to 11-16.
+        LedgerStats.calendarTimeZoneOverride = TimeZone(identifier: "Asia/Tokyo")
+        let second = LedgerStore(fileURL: fileURL)
+        XCTAssertEqual(second.expenses.first?.consumptionDay?.day, 15,
+                       "已回填的消费日应跨时区稳定，不能在 UTC+9 变成 11-16")
+    }
+
+    // MARK: - Codex 7c332e8d 规范 1: consumption-day backfill joins startup consistency
+
+    private func ledgerDataWithoutConsumptionDays(_ records: [Expense]) throws -> Data {
+        var objects = try JSONSerialization.jsonObject(
+            with: try JSONEncoder().encode(records)) as! [[String: Any]]
+        for index in objects.indices {
+            objects[index].removeValue(forKey: "consumptionDay")
+        }
+        return try JSONSerialization.data(withJSONObject: objects)
+    }
+
+    /// A normal old ledger (no consumption-day key) must open accounting on
+    /// first launch, backfill once, and accept a new expense. Publishing the
+    /// backfill before the startup consistency check makes the launch reads
+    /// disagree and wrongly parks this ledger in recovery.
+    func testLegacyBackfillWaitsForStartupConsistencyAndAllowsSave() throws {
+        let ledger = fileURL!
+        try ledgerDataWithoutConsumptionDays([
+            Expense(amountCents: 1234, categoryID: "food", date: Date())
+        ]).write(to: ledger)
+
+        let store = LedgerStore(fileURL: ledger)
+        XCTAssertEqual(store.readiness, .ready,
+                       "a consistent old ledger must open accounting after backfill")
+        XCTAssertNotNil(store.expenses.first?.consumptionDay,
+                        "the consumption day is established in memory on first launch")
+        try store.addExpense(amountCents: 500, categoryID: "transport")
+        let reopened = LedgerStore(fileURL: ledger)
+        XCTAssertEqual(reopened.expenses.map(\.amountCents).sorted(), [500, 1234],
+                       "original and new example expenses each counted once after restart")
+    }
+
+    /// A stale first read must not cause the backfill to publish over a newer
+    /// on-device ledger. Inconsistent startup reads must pause accounting and
+    /// keep the newer bytes untouched; a restart reads both records.
+    func testStaleLaunchSnapshotBackfillDoesNotOverwriteNewerLedger() throws {
+        let ledger = fileURL!
+        let original = try ledgerDataWithoutConsumptionDays([
+            Expense(amountCents: 1234, categoryID: "food", date: Date()),
+            Expense(amountCents: 8765, categoryID: "transport", date: Date())
+        ])
+        try original.write(to: ledger)
+        let stale = try ledgerDataWithoutConsumptionDays([
+            Expense(amountCents: 1234, categoryID: "food", date: Date())
+        ])
+
+        var readCalls = 0
+        let staleFirstRead: (URL) throws -> Data = { url in
+            readCalls += 1
+            return readCalls == 1 ? stale : try Data(contentsOf: url)
+        }
+        let store = LedgerStore(fileURL: ledger, readLedgerFile: staleFirstRead)
+        XCTAssertEqual(store.readiness, .needsRecovery,
+                       "reads disagreeing with the on-device ledger must pause accounting")
+        XCTAssertEqual(try Data(contentsOf: ledger), original,
+                       "a stale backfill must never overwrite the newer ledger bytes")
+        XCTAssertThrowsError(try store.addExpense(amountCents: 500, categoryID: "transport")) { error in
+            guard case LedgerStoreError.recoveryRequired = error else {
+                return XCTFail("expected recoveryRequired, got \(error)")
+            }
+        }
+
+        let reopened = LedgerStore(fileURL: ledger)
+        XCTAssertEqual(reopened.readiness, .ready)
+        XCTAssertEqual(reopened.expenses.map(\.amountCents).sorted(), [1234, 8765],
+                       "both example records survive the stale-snapshot launch")
+    }
+
+    /// If the backfill publish is refused, the original file stays byte-for-byte
+    /// and accounting pauses: an opening balance must never rely on a
+    /// consumption day that was never persisted. A restart retries and opens.
+    func testBackfillPublishFailureKeepsOriginalAndPausesUntilRestart() throws {
+        let ledger = fileURL!
+        let original = try ledgerDataWithoutConsumptionDays([
+            Expense(amountCents: 1234, categoryID: "food", date: Date())
+        ])
+        try original.write(to: ledger)
+
+        var failPublish = true
+        let store = LedgerStore(fileURL: ledger, finalPublishFailure: {
+            failPublish ? TestFinalPublishError.failed : nil
+        })
+        XCTAssertEqual(store.readiness, .needsRecovery,
+                       "an unpersisted consumption-day backfill must not open accounting")
+        XCTAssertEqual(try Data(contentsOf: ledger), original,
+                       "a failed backfill publish keeps the original bytes")
+        XCTAssertThrowsError(try store.addExpense(amountCents: 500, categoryID: "transport")) { error in
+            guard case LedgerStoreError.recoveryRequired = error else {
+                return XCTFail("expected recoveryRequired, got \(error)")
+            }
+        }
+
+        failPublish = false
+        let reopened = LedgerStore(fileURL: ledger)
+        XCTAssertEqual(reopened.readiness, .ready)
+        XCTAssertNotNil(reopened.expenses.first?.consumptionDay)
+        try reopened.addExpense(amountCents: 500, categoryID: "transport")
+        let final = LedgerStore(fileURL: ledger)
+        XCTAssertEqual(final.expenses.map(\.amountCents).sorted(), [500, 1234],
+                       "after retry the new example expense is stored exactly once")
+    }
+
+    /// Codex a0e26112 规范 1: a backfill derived from the snapshot startup
+    /// confirmed must not be published over a live ledger that changed while
+    /// the staged write was in flight. The newer two-record ledger (12.34 +
+    /// 87.65) must be preserved byte-for-byte, accounting and the opening
+    /// balance stay paused, and a restart must backfill both records.
+    func testBackfillPublishDoesNotOverwriteLedgerChangedDuringStaging() throws {
+        let ledger = fileURL!
+        let original = try ledgerDataWithoutConsumptionDays([
+            Expense(amountCents: 1234, categoryID: "food", date: Date())
+        ])
+        try original.write(to: ledger)
+        let newer = try ledgerDataWithoutConsumptionDays([
+            Expense(amountCents: 1234, categoryID: "food", date: Date()),
+            Expense(amountCents: 8765, categoryID: "transport", date: Date())
+        ])
+
+        // The seam runs after staging but before the final publish. Simulate a
+        // concurrent writer updating the live ledger at that instant and
+        // report no publish failure: an unconditional rename would drop 87.65.
+        let store = LedgerStore(fileURL: ledger, finalPublishFailure: {
+            try? newer.write(to: ledger)
+            return nil
+        })
+        XCTAssertEqual(store.readiness, .needsRecovery,
+                       "a backfill whose base snapshot changed must pause accounting")
+        XCTAssertEqual(try Data(contentsOf: ledger), newer,
+                       "the newer two-record ledger must be preserved byte-for-byte")
+        XCTAssertThrowsError(try store.addExpense(amountCents: 500, categoryID: "transport")) { error in
+            guard case LedgerStoreError.recoveryRequired = error else {
+                return XCTFail("expected recoveryRequired, got \(error)")
+            }
+        }
+
+        // Opening balance shares the ledger's recovery gate via the app wiring.
+        let historyURL = self.historyURL()
+        defer { try? FileManager.default.removeItem(at: historyURL) }
+        let history = HistoryStore(fileURL: historyURL)
+        history.openingBalanceAllowed = { store.readiness != .needsRecovery }
+        XCTAssertThrowsError(
+            try history.setOpeningBalance(amountCents: 5000, cutoffYear: 2026,
+                                          cutoffMonth: 11, cutoffDay: 15)
+        ) { error in
+            guard case LedgerStoreError.openingBalancePausedForRecovery = error else {
+                return XCTFail("expected openingBalancePausedForRecovery, got \(error)")
+            }
+        }
+
+        // A restart sees the preserved two-record ledger and completes the
+        // one-time backfill normally.
+        let reopened = LedgerStore(fileURL: ledger)
+        XCTAssertEqual(reopened.readiness, .ready)
+        XCTAssertEqual(reopened.expenses.map(\.amountCents).sorted(), [1234, 8765],
+                       "both example records survive and are backfilled on restart")
+        XCTAssertTrue(reopened.expenses.allSatisfy { $0.consumptionDay != nil },
+                      "restart completes the one-time backfill on the preserved records")
+    }
+
+    // MARK: - Codex 7c332e8d 规格 1: same expense imported once while the legacy copy is retained
+
+    /// A failed first cleanup leaves the legacy copy without a consumption day
+    /// while the live copy has been backfilled. On the next launch the two
+    /// representations describe the SAME expense (identical id/amount/category/
+    /// timestamp); they must be recognised as one record, never duplicated.
+    /// Codex 293af6e2 规格 3: the cleanup-pending UI fixture must seed the
+    /// retained legacy copy the way a real old ledger looks — original fields
+    /// but no consumption day — while the live copy is already migrated. If
+    /// both copies carry a day, the UI case never exercises a legacy copy that
+    /// still needs backfilling while cleanup is pending.
+    func testCleanupPendingFixtureSeedsLegacyCopyWithoutConsumptionDay() throws {
+        let name = "uitest-fixture-\(UUID().uuidString).json"
+        let env = [
+            "PAYLEDGER_TEST_LEDGER": name,
+            "PAYLEDGER_TEST_STATE": "cleanupPending",
+            "PAYLEDGER_TEST_NOW": "2026-11-20T10:00:00"
+        ]
+        let injected = try XCTUnwrap(PayLedgerApp.ledgerFileURL(environment: env))
+        let legacy = injected.deletingLastPathComponent()
+            .appendingPathComponent("\(injected.deletingPathExtension().lastPathComponent)-legacy.json")
+        defer {
+            LedgerStats.calendarTimeZoneOverride = nil
+            try? FileManager.default.removeItem(at: injected)
+            try? FileManager.default.removeItem(at: legacy)
+        }
+        LedgerStats.calendarTimeZoneOverride = nil
+
+        _ = PayLedgerApp.makeStore(environment: env,
+                                   productionFileURL: injected,
+                                   legacyFileURL: legacy)
+
+        let live = try JSONSerialization.jsonObject(with: Data(contentsOf: injected)) as! [[String: Any]]
+        let old = try JSONSerialization.jsonObject(with: Data(contentsOf: legacy)) as! [[String: Any]]
+        XCTAssertEqual(live.count, 1)
+        XCTAssertEqual(old.count, 1)
+        XCTAssertEqual(live.first?["amountCents"] as? Int, 1234)
+        XCTAssertEqual(old.first?["amountCents"] as? Int, 1234)
+        XCTAssertNotNil(live.first?["consumptionDay"], "live copy is migrated and backfilled")
+        XCTAssertNil(old.first?["consumptionDay"], "retained legacy copy must still need backfill")
+    }
+
+    /// The persisted day must survive a restart in another time zone.
+    func testRetainedLegacyCopyWithSameExpenseIsNotImportedTwice() throws {
+        let fm = FileManager.default
+        let legacy = fm.temporaryDirectory.appendingPathComponent("legacy-\(UUID().uuidString).json")
+        let newDir = fm.temporaryDirectory
+            .appendingPathComponent("migrated-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: newDir, withIntermediateDirectories: true)
+        let target = newDir.appendingPathComponent("ledger.json")
+        defer { try? fm.removeItem(at: legacy); try? fm.removeItem(at: newDir) }
+        defer { LedgerStats.calendarTimeZoneOverride = nil }
+
+        LedgerStats.calendarTimeZoneOverride = TimeZone(identifier: "Asia/Shanghai")
+        let instant = self.instant(2026, 11, 15, 23, 30, zone: "Asia/Shanghai")
+        let original = Expense(id: UUID(), amountCents: 1234, categoryID: "food", date: instant)
+        let legacyData = try ledgerDataWithoutConsumptionDays([original])
+        try legacyData.write(to: legacy)
+
+        // First launch: migrate the legacy bytes, then fail the cleanup. The
+        // legacy copy stays un-backfilled; the live copy gains a day (11-15).
+        var failRemoval = true
+        let first = LedgerStore(fileURL: target, legacyFileURL: legacy,
+                                removeLegacyFile: { _ in if failRemoval { throw TestLegacyRemovalError.failed } })
+        XCTAssertEqual(first.expenses.count, 1)
+        XCTAssertEqual(first.expenses.first?.consumptionDay?.day, 15)
+        XCTAssertTrue(first.legacyCleanupPending)
+        XCTAssertTrue(fm.fileExists(atPath: legacy.path))
+        XCTAssertEqual(try Data(contentsOf: legacy), legacyData,
+                       "the retained legacy copy keeps its original bytes")
+
+        // Cleanup-only state keeps accounting open: append a second expense
+        // while the old copy is still retained, then restart in another zone.
+        try first.addExpense(amountCents: 8765, categoryID: "food", date: instant)
+        XCTAssertEqual(first.expenses.map(\.amountCents), [1234, 8765])
+        XCTAssertEqual(first.expenses.last?.consumptionDay?.day, 15)
+        XCTAssertEqual(try Data(contentsOf: legacy), legacyData,
+                       "appending while cleanup is pending does not rewrite the retained copy")
+
+        // Restart in UTC+9 with cleanup now possible. The backfilled live copy
+        // and the un-backfilled legacy copy are the same UUID: import once, and
+        // keep the appended record. The original 12.34 and the 87.65 each count
+        // once and the total stays 99.99 after the time-zone change.
+        LedgerStats.calendarTimeZoneOverride = TimeZone(identifier: "Asia/Tokyo")
+        failRemoval = false
+        let reopened = LedgerStore(fileURL: target, legacyFileURL: legacy)
+        XCTAssertFalse(fm.fileExists(atPath: legacy.path), "cleanup retried on restart")
+        XCTAssertEqual(reopened.expenses.map(\.amountCents), [1234, 8765],
+                       "the same UUID must be imported once and the appended record must survive")
+        XCTAssertEqual(reopened.expenses.map(\.consumptionDay?.day), [15, 15],
+                       "both records keep their recorded day across the time-zone restart")
+        XCTAssertEqual(reopened.expenses.reduce(0) { $0 + $1.amountCents }, 9999,
+                       "12.34 + 87.65 = 99.99")
+        XCTAssertEqual(reopened.expenses.first?.id, original.id)
+        XCTAssertEqual(reopened.expenses.first?.consumptionDay?.day, 15,
+                       "the persisted consumption day is kept, not re-derived in UTC+9")
+        let reopenedInstant = try XCTUnwrap(reopened.expenses.first?.date)
+        XCTAssertEqual(reopenedInstant.timeIntervalSinceReferenceDate,
+                       instant.timeIntervalSinceReferenceDate, accuracy: 0.001)
+        XCTAssertEqual(reopened.readiness, .ready)
+
+        let third = LedgerStore(fileURL: target, legacyFileURL: legacy)
+        XCTAssertEqual(third.expenses.map(\.amountCents), [1234, 8765],
+                       "the total stays consistent after another restart")
     }
 }
 
