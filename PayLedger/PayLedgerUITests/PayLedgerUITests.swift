@@ -247,21 +247,21 @@ final class PayLedgerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["食品酒水 · 早午晚餐"].waitForExistence(timeout: 5),
                       "默认选择应在表单同步显示")
 
-        subWheel.pickerWheels.element.adjust(toPickerWheelValue: "零食饮料")
-        XCTAssertTrue(app.staticTexts["食品酒水 · 零食饮料"].waitForExistence(timeout: 5),
+        subWheel.pickerWheels.element.adjust(toPickerWheelValue: "水果零食")
+        XCTAssertTrue(app.staticTexts["食品酒水 · 水果零食"].waitForExistence(timeout: 5),
                       "选子类后表单应同步显示")
-        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "交通")
-        XCTAssertTrue(app.staticTexts["交通 · 公交地铁"].waitForExistence(timeout: 5),
+        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "行车交通")
+        XCTAssertTrue(app.staticTexts["行车交通 · 公共交通"].waitForExistence(timeout: 5),
                       "切换大类后右列应切到对应首个子类")
 
         app.buttons["doneCategoryWheel"].tap()
         XCTAssertFalse(app.pickers["primaryCategoryPicker"].exists, "完成后滚轮应收起")
-        XCTAssertTrue(app.staticTexts["交通 · 公交地铁"].exists, "收起后保留所选分类")
+        XCTAssertTrue(app.staticTexts["行车交通 · 公共交通"].exists, "收起后保留所选分类")
         XCTAssertEqual(amountField.value as? String, "31.20", "收起后保留已输入金额")
 
         app.buttons["保存"].tap()
-        assertPersistedRow(category: "交通", amount: "31.20", in: app)
-        assertPersistedRow(category: "公交地铁", amount: "31.20", in: app)
+        assertPersistedRow(category: "行车交通", amount: "31.20", in: app)
+        assertPersistedRow(category: "公共交通", amount: "31.20", in: app)
     }
 
     /// The two-column wheel selects a primary and a subcategory; changing the
@@ -285,15 +285,15 @@ final class PayLedgerUITests: XCTestCase {
         XCTAssertTrue(subWheel.waitForExistence(timeout: 5), "缺少子类滚轮")
 
         // Selecting a subcategory updates the synced label immediately.
-        subWheel.pickerWheels.element.adjust(toPickerWheelValue: "零食饮料")
-        XCTAssertTrue(app.staticTexts["食品酒水 · 零食饮料"].waitForExistence(timeout: 5),
-                      "选择子类后表单应同步显示食品酒水 · 零食饮料")
+        subWheel.pickerWheels.element.adjust(toPickerWheelValue: "水果零食")
+        XCTAssertTrue(app.staticTexts["食品酒水 · 水果零食"].waitForExistence(timeout: 5),
+                      "选择子类后表单应同步显示食品酒水 · 水果零食")
 
         // Changing the primary refreshes the subcategory column to that
         // primary's children and resets the synced label.
-        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "交通")
-        XCTAssertTrue(app.staticTexts["交通 · 公交地铁"].waitForExistence(timeout: 5),
-                      "切换大类后子类应刷新为交通的子类")
+        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "行车交通")
+        XCTAssertTrue(app.staticTexts["行车交通 · 公共交通"].waitForExistence(timeout: 5),
+                      "切换大类后子类应刷新为行车交通的子类")
         app.buttons["doneCategoryWheel"].tap()
         XCTAssertFalse(app.pickers["primaryCategoryPicker"].exists, "点完成后应回到收起状态")
 
@@ -303,14 +303,18 @@ final class PayLedgerUITests: XCTestCase {
         amountField.tap()
         amountField.typeText("23.45")
         app.buttons["保存"].tap()
-        assertPersistedRow(category: "交通", amount: "23.45", in: app)
-        assertPersistedRow(category: "公交地铁", amount: "23.45", in: app)
+        assertPersistedRow(category: "行车交通", amount: "23.45", in: app)
+        assertPersistedRow(category: "公共交通", amount: "23.45", in: app)
 
         // Rename the primary from the management screen. The historical row
         // keeps its amount and shows the new name, before and after restart.
         app.buttons["分类"].tap()
         let rename = app.buttons["renamePrimary-transport"]
-        XCTAssertTrue(rename.waitForExistence(timeout: 5))
+        for _ in 0..<12 {
+            if rename.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(rename.isHittable)
         rename.tap()
         XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5), "改名应弹出输入框")
         let field = app.alerts.firstMatch.textFields.firstMatch
@@ -320,7 +324,7 @@ final class PayLedgerUITests: XCTestCase {
         app.buttons["保存"].tap()
         app.buttons["完成"].tap()
         assertPersistedRow(category: "出行", amount: "23.45", in: app)
-        assertPersistedRow(category: "公交地铁", amount: "23.45", in: app)
+        assertPersistedRow(category: "公共交通", amount: "23.45", in: app)
 
         app.terminate()
         app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": ledger]
@@ -338,7 +342,7 @@ final class PayLedgerUITests: XCTestCase {
 
         // 从首页「分类」新增一个没有子类的大类。
         app.buttons["分类"].tap()
-        app.buttons["addPrimary"].tap()
+        scrollToAddPrimary(in: app).tap()
         let nameField = app.alerts.firstMatch.textFields.firstMatch
         XCTAssertTrue(nameField.waitForExistence(timeout: 5))
         nameField.tap()
@@ -379,7 +383,7 @@ final class PayLedgerUITests: XCTestCase {
         app.launch()
 
         app.buttons["分类"].tap()
-        app.buttons["addPrimary"].tap()
+        scrollToAddPrimary(in: app).tap()
         let nameField = app.alerts.firstMatch.textFields.firstMatch
         XCTAssertTrue(nameField.waitForExistence(timeout: 5))
         nameField.tap()
@@ -402,9 +406,7 @@ final class PayLedgerUITests: XCTestCase {
         // 在已打开的表单里给当前大类新增第一个子类。购物是最后一段，
         // 取其「新增子类」按钮。
         app.buttons["管理分类"].tap()
-        var addSubButtons = app.buttons.allElementsBoundByIndex.filter { $0.label == "新增子类" }
-        XCTAssertEqual(addSubButtons.count, 3)
-        addSubButtons.last?.tap()
+        tapAddSubcategoryForLastGroup(in: app)
         var field = app.alerts.firstMatch.textFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
@@ -416,8 +418,7 @@ final class PayLedgerUITests: XCTestCase {
 
         // 再次新增子类，仍有效的「日用品」选择不应被重置。
         app.buttons["管理分类"].tap()
-        addSubButtons = app.buttons.allElementsBoundByIndex.filter { $0.label == "新增子类" }
-        addSubButtons.last?.tap()
+        tapAddSubcategoryForLastGroup(in: app)
         field = app.alerts.firstMatch.textFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
@@ -436,6 +437,24 @@ final class PayLedgerUITests: XCTestCase {
         XCTAssertNotNil(row)
         XCTAssertFalse(row?.staticTexts["服饰"].exists ?? true,
                        "逐笔行应写入当时选中的子类，而非后来新增的子类")
+    }
+
+    private func scrollToAddPrimary(in app: XCUIApplication) -> XCUIElement {
+        let addPrimary = app.buttons["addPrimary"]
+        for _ in 0..<20 {
+            if addPrimary.isHittable { break }
+            app.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(addPrimary.isHittable)
+        return addPrimary
+    }
+
+    private func tapAddSubcategoryForLastGroup(in app: XCUIApplication) {
+        _ = scrollToAddPrimary(in: app)
+        let addSubcategory = app.buttons.matching(identifier: "新增子类")
+            .allElementsBoundByIndex.last(where: \.isHittable)
+        XCTAssertNotNil(addSubcategory)
+        addSubcategory?.tap()
     }
 
     /// 账单入口与展开：从首页进入周/月/年账单，用示例金额核对小计、逐笔明细
@@ -466,7 +485,7 @@ final class PayLedgerUITests: XCTestCase {
         app.buttons["chooseCategory"].tap()
         let primaryWheel = app.pickers["primaryCategoryPicker"]
         XCTAssertTrue(primaryWheel.waitForExistence(timeout: 5))
-        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "交通")
+        primaryWheel.pickerWheels.element.adjust(toPickerWheelValue: "行车交通")
         app.buttons["doneCategoryWheel"].tap()
         app.buttons["保存"].tap()
 
@@ -488,7 +507,7 @@ final class PayLedgerUITests: XCTestCase {
         tapCell(with: "2026年11月", in: app)
         XCTAssertTrue(cellExists(with: "2026-11-18", in: app))
         XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 1)
-        XCTAssertEqual(countCells(containing: "公交地铁", in: app), 1)
+        XCTAssertEqual(countCells(containing: "公共交通", in: app), 1)
         tapCell(with: "2026年11月", in: app)
         XCTAssertEqual(countCells(containing: "2026-11-18", in: app), 0, "再次点按月汇总行应收起明细")
         XCTAssertTrue(app.navigationBars["月账单"].exists, "展开收起仍停留在月账单页")
@@ -506,17 +525,17 @@ final class PayLedgerUITests: XCTestCase {
             XCTFail("找不到 11 月"); return
         }
         XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 0, "滚到 11 月后、点按前不应显示逐笔内容")
-        XCTAssertEqual(countCells(containing: "公交地铁", in: app), 0, "滚到 11 月后、点按前不应显示第二笔逐笔内容")
+        XCTAssertEqual(countCells(containing: "公共交通", in: app), 0, "滚到 11 月后、点按前不应显示第二笔逐笔内容")
         november.tap()
         XCTAssertTrue(cellExists(with: "2026-11-18", in: app))
         // 逐行配对核对：子类与金额必须在同一行，金额互换也会失败。
         assertPersistedRow(category: "早午晚餐", amount: "12.34", in: app)
-        assertPersistedRow(category: "公交地铁", amount: "87.65", in: app)
+        assertPersistedRow(category: "公共交通", amount: "87.65", in: app)
         XCTAssertFalse(app.cells.allElementsBoundByIndex.contains {
             $0.staticTexts["早午晚餐"].exists && $0.staticTexts["87.65"].exists
         }, "同一逐笔行的子类与金额必须配对，不能跨行混用")
         XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 1, "单点月份应直接显示逐笔子类行")
-        XCTAssertEqual(countCells(containing: "公交地铁", in: app), 1)
+        XCTAssertEqual(countCells(containing: "公共交通", in: app), 1)
         guard let january = findCell("1月", in: app, swipeUp: false) else {
             XCTFail("找不到 1 月"); return
         }
@@ -529,7 +548,7 @@ final class PayLedgerUITests: XCTestCase {
         XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 1, "收起其它月份不应影响已展开的 11 月")
         novemberAgain.tap()
         XCTAssertEqual(countCells(containing: "早午晚餐", in: app), 0, "收起 11 月应移除其逐笔明细")
-        XCTAssertEqual(countCells(containing: "公交地铁", in: app), 0, "收起 11 月应移除第二笔逐笔明细")
+        XCTAssertEqual(countCells(containing: "公共交通", in: app), 0, "收起 11 月应移除第二笔逐笔明细")
         XCTAssertEqual(countCells(containing: "2026-11-18", in: app), 0, "收起 11 月应移除其日期行")
         XCTAssertNotNil(findCell("合计", in: app, swipeUp: false))
         assertBillTotal("99.99", in: app)

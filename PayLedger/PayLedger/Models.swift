@@ -167,7 +167,7 @@ enum ExpenseCategory {
     static func displayName(for id: String) -> String {
         switch id {
         case "food": return "食品酒水"
-        case "transport": return "交通"
+        case "transport": return "行车交通"
         default: return id
         }
     }
@@ -187,21 +187,116 @@ struct ExpenseCategoryGroup: Identifiable, Codable, Equatable {
     var subcategories: [ExpenseSubcategory]
 }
 
-/// Built-in example categories for development and demo. The two-level
-/// example "食品酒水 → 早午晚餐" comes from the original requirement; exact
-/// order/detail still needs the (currently unavailable) screen recording.
-/// Primary ids reuse the legacy ids so pre-existing expenses keep their name.
+/// The built-in tree follows the order of the recorded expense picker.
+/// IDs from the original example tree still identify the same expenses.
 enum ExpenseCategories {
     static let defaults: [ExpenseCategoryGroup] = [
         ExpenseCategoryGroup(id: "food", name: "食品酒水", subcategories: [
             ExpenseSubcategory(id: "food-meal", name: "早午晚餐"),
-            ExpenseSubcategory(id: "food-snack", name: "零食饮料"),
+            ExpenseSubcategory(id: "food-tobacco-tea", name: "烟酒茶"),
+            ExpenseSubcategory(id: "food-snack", name: "水果零食"),
         ]),
-        ExpenseCategoryGroup(id: "transport", name: "交通", subcategories: [
-            ExpenseSubcategory(id: "transport-bus", name: "公交地铁"),
-            ExpenseSubcategory(id: "transport-taxi", name: "打车"),
+        ExpenseCategoryGroup(id: "home", name: "居家物业", subcategories: [
+            ExpenseSubcategory(id: "home-supplies", name: "日常用品"),
+            ExpenseSubcategory(id: "home-utilities", name: "水电煤气"),
+            ExpenseSubcategory(id: "home-rent", name: "房租"),
+            ExpenseSubcategory(id: "home-management", name: "物业管理"),
+            ExpenseSubcategory(id: "home-maintenance", name: "维修保养"),
+        ]),
+        ExpenseCategoryGroup(id: "clothing", name: "衣服饰品", subcategories: [
+            ExpenseSubcategory(id: "clothing-clothes", name: "衣服裤子"),
+            ExpenseSubcategory(id: "clothing-accessories", name: "鞋帽包包"),
+            ExpenseSubcategory(id: "clothing-cosmetics", name: "化妆饰品"),
+        ]),
+        ExpenseCategoryGroup(id: "transport", name: "行车交通", subcategories: [
+            ExpenseSubcategory(id: "transport-bus", name: "公共交通"),
+            ExpenseSubcategory(id: "transport-taxi", name: "打车租车"),
+            ExpenseSubcategory(id: "transport-car", name: "私家车费用"),
+            ExpenseSubcategory(id: "transport-fuel", name: "油费"),
+            ExpenseSubcategory(id: "transport-toll", name: "高速"),
+            ExpenseSubcategory(id: "transport-supplies", name: "车内用品"),
+            ExpenseSubcategory(id: "transport-parking", name: "停车费"),
+            ExpenseSubcategory(id: "transport-loan", name: "车贷"),
+            ExpenseSubcategory(id: "transport-fine", name: "罚款"),
+            ExpenseSubcategory(id: "transport-wash", name: "洗车"),
+        ]),
+        ExpenseCategoryGroup(id: "communication", name: "交流通讯", subcategories: [
+            ExpenseSubcategory(id: "communication-landline", name: "座机费"),
+            ExpenseSubcategory(id: "communication-mobile", name: "手机费"),
+            ExpenseSubcategory(id: "communication-internet", name: "上网费"),
+            ExpenseSubcategory(id: "communication-postage", name: "邮寄费"),
+        ]),
+        ExpenseCategoryGroup(id: "leisure", name: "休闲娱乐", subcategories: [
+            ExpenseSubcategory(id: "leisure-fitness", name: "运动健身"),
+            ExpenseSubcategory(id: "leisure-gathering", name: "腐败聚会"),
+            ExpenseSubcategory(id: "leisure-recreation", name: "休闲玩乐"),
+            ExpenseSubcategory(id: "leisure-pets", name: "宠物宝贝"),
+            ExpenseSubcategory(id: "leisure-travel", name: "旅游度假"),
+        ]),
+        ExpenseCategoryGroup(id: "education", name: "学习进修", subcategories: [
+            ExpenseSubcategory(id: "education-devices", name: "数码装备"),
+            ExpenseSubcategory(id: "education-books", name: "书报杂志"),
+            ExpenseSubcategory(id: "education-training", name: "培训进修"),
+        ]),
+        ExpenseCategoryGroup(id: "social", name: "人情往来", subcategories: [
+            ExpenseSubcategory(id: "social-gifts", name: "送礼请客"),
+            ExpenseSubcategory(id: "social-parents", name: "孝敬家长"),
+            ExpenseSubcategory(id: "social-repayment", name: "还人钱物"),
+            ExpenseSubcategory(id: "social-donation", name: "慈善捐助"),
+            ExpenseSubcategory(id: "social-wedding", name: "婚礼"),
+        ]),
+        ExpenseCategoryGroup(id: "health", name: "医疗保健", subcategories: [
+            ExpenseSubcategory(id: "health-medicine", name: "药品费"),
+            ExpenseSubcategory(id: "health-wellness", name: "保健费"),
+            ExpenseSubcategory(id: "health-beauty", name: "美容费"),
+            ExpenseSubcategory(id: "health-treatment", name: "治疗费"),
+        ]),
+        ExpenseCategoryGroup(id: "finance", name: "金融保险", subcategories: [
+            ExpenseSubcategory(id: "finance-banking", name: "银行手续"),
+            ExpenseSubcategory(id: "finance-investment", name: "投资亏损"),
+            ExpenseSubcategory(id: "finance-mortgage", name: "按揭还款"),
+            ExpenseSubcategory(id: "finance-tax", name: "消费税收"),
+            ExpenseSubcategory(id: "finance-interest", name: "利息支出"),
+            ExpenseSubcategory(id: "finance-compensation", name: "赔偿罚款"),
+        ]),
+        ExpenseCategoryGroup(id: "other", name: "其他杂项", subcategories: [
+            ExpenseSubcategory(id: "other-expense", name: "其他支出"),
+            ExpenseSubcategory(id: "other-loss", name: "意外丢失"),
+            ExpenseSubcategory(id: "other-bad-debt", name: "烂账损失"),
         ]),
     ]
+
+    private static let previousDefaultNames = [
+        "transport": "交通",
+        "food-snack": "零食饮料",
+        "transport-bus": "公交地铁",
+        "transport-taxi": "打车",
+    ]
+
+    /// Add newly built-in choices at load time while retaining user edits.
+    /// The next category edit persists the merged tree through the usual save path.
+    static func mergingSavedGroups(_ saved: [ExpenseCategoryGroup]) -> [ExpenseCategoryGroup] {
+        // The first expanded catalog always saves the built-in home group.
+        // Once present, even a deliberate rename to an old default is user data.
+        let isLegacy = !saved.contains { $0.id == "home" }
+        let oldNames = isLegacy ? previousDefaultNames : [:]
+        let builtInIDs = Set(defaults.map(\.id))
+        let updated = defaults.map { group in
+            guard let existing = saved.first(where: { $0.id == group.id }) else { return group }
+            let builtInChildIDs = Set(group.subcategories.map(\.id))
+            let children = group.subcategories.map { child in
+                guard let existingChild = existing.subcategories.first(where: { $0.id == child.id }),
+                      existingChild.name != oldNames[child.id] else { return child }
+                return existingChild
+            }
+            return ExpenseCategoryGroup(
+                id: group.id,
+                name: existing.name == oldNames[group.id] ? group.name : existing.name,
+                subcategories: children + existing.subcategories.filter { !builtInChildIDs.contains($0.id) }
+            )
+        }
+        return updated + saved.filter { !builtInIDs.contains($0.id) }
+    }
 }
 
 // MARK: - Issue 04: historical amounts (example values only)

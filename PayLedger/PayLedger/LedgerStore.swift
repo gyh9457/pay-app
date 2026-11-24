@@ -859,7 +859,8 @@ final class CategoryStore: ObservableObject {
             return
         }
         do {
-            self.groups = try JSONDecoder().decode([ExpenseCategoryGroup].self, from: data)
+            let saved = try JSONDecoder().decode([ExpenseCategoryGroup].self, from: data)
+            self.groups = ExpenseCategories.mergingSavedGroups(saved)
         } catch {
             // Keep the original bytes untouched and surface the damage.
             self.isUnreadable = true

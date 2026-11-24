@@ -2311,14 +2311,61 @@ final class PayLedgerTests: XCTestCase {
 
     func testCategoryStoreDefaultsAndLookup() throws {
         let store = CategoryStore(fileURL: exampleCategoryURL())
-        XCTAssertEqual(store.groups.count, 2)
+        XCTAssertEqual(store.groups.map(\.name), [
+            "食品酒水", "居家物业", "衣服饰品", "行车交通", "交流通讯", "休闲娱乐",
+            "学习进修", "人情往来", "医疗保健", "金融保险", "其他杂项",
+        ])
+        XCTAssertEqual(store.groups.reduce(0) { $0 + $1.subcategories.count }, 51)
         XCTAssertEqual(store.primaryName(for: "food"), "食品酒水")
-        XCTAssertEqual(store.primaryName(for: "transport"), "交通")
-        // Unknown ids fall back to the legacy mapping instead of showing a raw id.
+        XCTAssertEqual(store.primaryName(for: "transport"), "行车交通")
         XCTAssertEqual(store.primaryName(for: "unknown"), "unknown")
-        XCTAssertEqual(store.subcategories(in: "food").map(\.name), ["早午晚餐", "零食饮料"])
+        XCTAssertEqual(store.subcategories(in: "food").map(\.name), ["早午晚餐", "烟酒茶", "水果零食"])
+        XCTAssertEqual(store.subcategories(in: "transport").map(\.name), [
+            "公共交通", "打车租车", "私家车费用", "油费", "高速", "车内用品", "停车费", "车贷", "罚款", "洗车",
+        ])
         XCTAssertEqual(
             store.subcategoryName(primaryID: "food", subcategoryID: "food-meal"), "早午晚餐")
+    }
+
+    func testLegacyCategoryFileAddsRecordedDefaultsAndPreservesEdits() throws {
+        let url = exampleCategoryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let legacy = [
+            ExpenseCategoryGroup(id: "food", name: "餐饮", subcategories: [
+                ExpenseSubcategory(id: "food-meal", name: "早午晚餐"),
+                ExpenseSubcategory(id: "food-snack", name: "零食饮料"),
+                ExpenseSubcategory(id: "sub-night", name: "夜宵"),
+            ]),
+            ExpenseCategoryGroup(id: "transport", name: "交通", subcategories: [
+                ExpenseSubcategory(id: "transport-bus", name: "公交地铁"),
+                ExpenseSubcategory(id: "transport-taxi", name: "网约车"),
+            ]),
+            ExpenseCategoryGroup(id: "cat-custom", name: "我的分类", subcategories: []),
+        ]
+        let original = try JSONEncoder().encode(legacy)
+        try original.write(to: url)
+        let ledger = LedgerStore(fileURL: fileURL)
+        try ledger.addExpense(amountCents: 1234, categoryID: "transport",
+                              subcategoryID: "transport-bus", date: Date())
+
+        let store = CategoryStore(fileURL: url)
+        XCTAssertEqual(store.groups.map(\.id), ExpenseCategories.defaults.map(\.id) + ["cat-custom"])
+        XCTAssertEqual(store.primaryName(for: "food"), "餐饮")
+        XCTAssertEqual(store.primaryName(for: "transport"), "行车交通")
+        XCTAssertEqual(store.subcategories(in: "food").map(\.name), ["早午晚餐", "烟酒茶", "水果零食", "夜宵"])
+        XCTAssertEqual(store.subcategories(in: "food").last?.id, "sub-night")
+        XCTAssertEqual(store.subcategoryName(primaryID: "transport", subcategoryID: "transport-taxi"), "网约车")
+        let savedExpense = try XCTUnwrap(LedgerStore(fileURL: fileURL).expenses.first)
+        XCTAssertEqual(savedExpense.amountCents, 1234)
+        XCTAssertEqual(store.subcategoryName(primaryID: savedExpense.categoryID,
+                                             subcategoryID: savedExpense.subcategoryID), "公共交通")
+        XCTAssertEqual(try Data(contentsOf: url), original)
+        XCTAssertEqual(CategoryStore(fileURL: url).groups, store.groups)
+
+        // A later edit may intentionally reuse a name from the old catalog.
+        try store.renamePrimary(id: "transport", to: "交通")
+        try store.renameSubcategory(primaryID: "food", subcategoryID: "food-snack", to: "零食饮料")
+        XCTAssertEqual(CategoryStore(fileURL: url).groups, store.groups)
     }
 
     func testReconciledSubcategoryKeepsValidChoiceAndSelectsFirstOtherwise() throws {
@@ -2385,7 +2432,7 @@ final class PayLedgerTests: XCTestCase {
         XCTAssertEqual(reopened.subcategoryName(primaryID: "food", subcategoryID: addedID), "深夜食堂")
         // Renaming a subcategory does not disturb its siblings.
         XCTAssertEqual(reopened.subcategories(in: "food").map(\.name),
-                       ["早午晚餐", "零食饮料", "深夜食堂"])
+                       ["早午晚餐", "烟酒茶", "水果零食", "深夜食堂"])
     }
 
     func testAddPrimaryPersistsAcrossRestart() throws {
@@ -2397,7 +2444,7 @@ final class PayLedgerTests: XCTestCase {
         XCTAssertEqual(store.primaryName(for: addedID), "居家生活")
         let reopened = CategoryStore(fileURL: categoryURL)
         XCTAssertEqual(reopened.primaryName(for: addedID), "居家生活")
-        XCTAssertEqual(reopened.groups.count, 3)
+        XCTAssertEqual(reopened.groups.count, 12)
     }
 
     func testLegacyExpenseWithoutSubcategoryStillDecodes() throws {
