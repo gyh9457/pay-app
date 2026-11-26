@@ -1,0 +1,34 @@
+# macOS and Xcode local state
+.DS_Store
+xcuserdata/
+*.xcuserstate
+/DerivedData/
+/build/
+/.build/
+*.xcresult/
+__pycache__/
+
+# Build, distribution and signing files
+/dist/
+*.ipa
+*.dmg
+*.xcarchive/
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.p8
+*.pfx
+*.key
+*.pem
+*.local.xcconfig
+.env
+.env.*
+!*.example
+
+# Local device data and development references
+ledger.json
+categories.json
+history.json
+/demo.mp4
+/3199_1795183757.mp4
+/.agents/skills/payledger-renew/
