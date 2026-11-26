@@ -31,4 +31,10 @@ categories.json
 history.json
 /demo.mp4
 /3199_1795183757.mp4
-/.agents/skills/payledger-renew/
+
+# Local project planning and agent workflows
+/.agents/
+/.scratch/
+/docs/agents/
+/AGENTS.md
+/原始需求.md
