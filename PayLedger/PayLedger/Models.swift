@@ -36,6 +36,7 @@ struct Expense: Identifiable, Codable, Equatable {
     /// created before issue 02; Swift's synthesized decoder fills nil.
     let subcategoryID: String?
     let date: Date
+    let note: String?
     /// The day chosen at recording time. Optional only so old ledgers still
     /// decode; synthesized decoding fills nil for the missing key. Expenses
     /// created by the app always carry a day. `var` so a first-load backfill
@@ -44,12 +45,13 @@ struct Expense: Identifiable, Codable, Equatable {
 
     init(id: UUID = UUID(), amountCents: Int, categoryID: String,
          subcategoryID: String? = nil, date: Date,
-         consumptionDay: ConsumptionDay? = nil) {
+         consumptionDay: ConsumptionDay? = nil, note: String? = nil) {
         self.id = id
         self.amountCents = amountCents
         self.categoryID = categoryID
         self.subcategoryID = subcategoryID
         self.date = date
+        self.note = note.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         // Expenses created by the app carry the day chosen at record time,
         // captured in the device calendar. Callers building a record in a
         // different calendar (tests) can pass that day explicitly. nil is

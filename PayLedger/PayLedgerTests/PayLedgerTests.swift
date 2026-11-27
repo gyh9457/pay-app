@@ -86,6 +86,33 @@ final class PayLedgerTests: XCTestCase {
         XCTAssertTrue(store.expenses.isEmpty)
     }
 
+    func testExpenseNoteCanBeAddedToOldRecordPreservedAndCleared() throws {
+        let date = exampleDate(2026, 11, 16)
+        let original = Expense(amountCents: 1234, categoryID: "food", subcategoryID: "food-meals", date: date)
+        let oldLedger = try JSONEncoder().encode([original])
+        let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: oldLedger) as? [[String: Any]])
+        XCTAssertNil(rows.first?["note"])
+        try oldLedger.write(to: fileURL)
+
+        let store = LedgerStore(fileURL: fileURL)
+        let oldExpense = try XCTUnwrap(store.expenses.first)
+        XCTAssertNil(oldExpense.note)
+        try store.updateExpense(oldExpense, amountCents: original.amountCents, categoryID: original.categoryID,
+                                subcategoryID: original.subcategoryID, note: "早饭")
+        let noted = try XCTUnwrap(LedgerStore(fileURL: fileURL).expenses.first)
+        XCTAssertEqual(noted.note, "早饭")
+        XCTAssertTrue(noted.hasSameOriginalFields(as: original))
+        XCTAssertEqual(noted.consumptionDay, original.consumptionDay)
+
+        try store.updateExpense(noted, amountCents: 2345, categoryID: noted.categoryID,
+                                subcategoryID: noted.subcategoryID)
+        let repriced = try XCTUnwrap(store.expenses.first)
+        XCTAssertEqual(repriced.note, "早饭")
+        try store.updateExpense(repriced, amountCents: repriced.amountCents, categoryID: repriced.categoryID,
+                                subcategoryID: repriced.subcategoryID, note: "")
+        XCTAssertNil(try XCTUnwrap(LedgerStore(fileURL: fileURL).expenses.first).note)
+    }
+
     func testExpenseChangesPersistAndKeepOpeningBalanceSeparate() throws {
         let store = LedgerStore(fileURL: fileURL)
         let cutoff = exampleDate(2026, 11, 15)

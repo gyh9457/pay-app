@@ -6,6 +6,7 @@ struct ExpenseEntryView: View {
     @Environment(\.dismiss) private var dismiss
     private let expense: Expense?
     @State private var amountText: String
+    @State private var noteText: String
     @State private var selectedDate: Date
     @State private var primaryID: String
     @State private var subcategoryID: String?
@@ -19,6 +20,7 @@ struct ExpenseEntryView: View {
         self.expense = expense
         let firstGroup = categoryStore.groups.first
         _amountText = State(initialValue: expense.map { Currency.format($0.amountCents) } ?? "")
+        _noteText = State(initialValue: expense?.note ?? "")
         _primaryID = State(initialValue: expense?.categoryID ?? firstGroup?.id ?? "food")
         _subcategoryID = State(initialValue: expense == nil ? firstGroup?.subcategories.first?.id : expense?.subcategoryID)
         let calendar = LedgerStats.calendar
@@ -70,6 +72,11 @@ struct ExpenseEntryView: View {
                     }
                     HStack { Text("账户"); Spacer(); Text("现金（默认）").foregroundStyle(.secondary) }
                 }
+                Section("备注") {
+                    TextField("选填", text: $noteText)
+                        .accessibilityLabel("备注")
+                        .accessibilityIdentifier("expenseNote")
+                }
                 if let errorMessage {
                     Section { Text(errorMessage).foregroundStyle(.red) }
                 }
@@ -120,16 +127,15 @@ struct ExpenseEntryView: View {
         do {
             if let expense {
                 try store.updateExpense(expense, amountCents: cents, categoryID: primaryID,
-                                        subcategoryID: subcategoryID, date: selectedDate)
+                                        subcategoryID: subcategoryID, date: selectedDate, note: noteText)
             } else {
                 try store.addExpense(amountCents: cents, categoryID: primaryID,
-                                     subcategoryID: subcategoryID, date: AppClock.now)
+                                     subcategoryID: subcategoryID, date: AppClock.now, note: noteText)
             }
             errorMessage = nil
             dismiss()
         } catch {
-            // Keep the form, typed amount and selected category so the user can
-            // retry; surface the failure instead of silently losing it.
+            // Keep the entered values so the user can retry.
             errorMessage = error.localizedDescription
         }
     }
