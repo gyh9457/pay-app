@@ -7,17 +7,21 @@ import XCTest
 final class PayLedgerUITests: XCTestCase {
     private let exampleAmount = "87.65"
 
-    func testEditingExpenseOpensWithAmountKeyboard() {
+    func testCreatingAndEditingExpensesOpenWithAmountKeyboard() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": "uitest-\(UUID().uuidString).json"]
         app.launch()
-        save("12.34", in: app)
+        app.buttons["记一笔"].tap()
+        let amount = app.textFields["0.00"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        amount.typeText("12.34")
+        app.buttons["保存"].tap()
 
         tapCell(with: "早午晚餐", in: app)
         XCTAssertTrue(app.navigationBars["修改流水"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        let amount = app.textFields["0.00"]
         amount.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5) + "23.45")
         XCTAssertEqual(amount.value as? String, "23.45")
         app.buttons["取消"].tap()
