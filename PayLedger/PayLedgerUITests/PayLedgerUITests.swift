@@ -652,10 +652,10 @@ final class PayLedgerUITests: XCTestCase {
         ]
         app.launch()
 
-        // 首页风景图随应用打包、离线可用；截图留证核对浅色列表、绿色金额与橙色入口。
-        XCTAssertTrue(app.otherElements["landscapeHeader"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["支出摘要"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["landscapeHeader"].exists)
         let homeShot = XCTAttachment(screenshot: app.screenshot())
-        homeShot.name = "home-landscape-and-summary"
+        homeShot.name = "home-expense-summary"
         homeShot.lifetime = .keepAlways
         add(homeShot)
 

@@ -32,11 +32,6 @@ struct ContentView: View {
         let paused = store.readiness == .needsRecovery
         NavigationStack {
             List {
-                // Offline landscape drawn in-app (no network, no external
-                // asset): part of the shipped bundle, shown above the summary.
-                LandscapeHeaderView()
-                    .frame(height: 150)
-                    .listRowInsets(EdgeInsets())
                 // A persistent status banner. Recovery is decided at launch,
                 // before accounting opens, so this never flickers mid-session.
                 if paused {
@@ -50,7 +45,7 @@ struct ContentView: View {
                             .foregroundStyle(.orange)
                     }
                 }
-                Section("支出摘要（示例）") {
+                Section("支出摘要") {
                     summaryRow("今天", interval: LedgerStats.dayInterval(containing: now))
                     if let week = LedgerStats.weekInterval(containing: now) {
                         NavigationLink {
@@ -382,48 +377,6 @@ struct HistoryEntryView: View {
         } catch {
             openingErrorMessage = error.localizedDescription
         }
-    }
-}
-
-/// A self-contained landscape drawn with SwiftUI shapes. It ships inside the
-/// app binary and needs no network or external image file, so the home screen
-/// stays fully offline like the rest of the ledger.
-private struct LandscapeHeaderView: View {
-    var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let h = geo.size.height
-            ZStack(alignment: .bottom) {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.42, green: 0.70, blue: 0.92),
-                        Color(red: 0.82, green: 0.92, blue: 0.98)
-                    ],
-                    startPoint: .top, endPoint: .bottom
-                )
-                Circle()
-                    .fill(Color.yellow.opacity(0.92))
-                    .frame(width: 46, height: 46)
-                    .position(x: w * 0.78, y: h * 0.30)
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: h * 0.82))
-                    path.addLine(to: CGPoint(x: w * 0.26, y: h * 0.40))
-                    path.addLine(to: CGPoint(x: w * 0.48, y: h * 0.74))
-                    path.addLine(to: CGPoint(x: w * 0.70, y: h * 0.48))
-                    path.addLine(to: CGPoint(x: w, y: h * 0.84))
-                    path.addLine(to: CGPoint(x: w, y: h))
-                    path.addLine(to: CGPoint(x: 0, y: h))
-                    path.closeSubpath()
-                }
-                .fill(Color(red: 0.33, green: 0.52, blue: 0.43))
-                Rectangle()
-                    .fill(Color(red: 0.24, green: 0.47, blue: 0.66))
-                    .frame(height: h * 0.20)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("离线风景图")
-        .accessibilityIdentifier("landscapeHeader")
     }
 }
 
