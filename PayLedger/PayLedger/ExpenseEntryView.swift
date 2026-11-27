@@ -85,7 +85,7 @@ struct ExpenseEntryView: View {
             }
             .navigationTitle(expense == nil ? "记一笔" : "修改流水")
             .onAppear {
-                if expense != nil { isAmountFocused = true }
+                isAmountFocused = true
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
