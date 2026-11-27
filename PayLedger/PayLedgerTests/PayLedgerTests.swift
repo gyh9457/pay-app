@@ -2646,8 +2646,7 @@ final class PayLedgerTests: XCTestCase {
 
         let groups = LedgerStats.weekCategoryGroups(expenses, in: week)
         XCTAssertEqual(groups.map(\.categoryID), ["food", "transport"])
-        XCTAssertEqual(groups[0].expenses.count, 2)
-        XCTAssertEqual(groups[0].expenses.first?.amountCents, 1234, "drill-down rows are date-ordered")
+        XCTAssertEqual(groups[0].expenses.map(\.amountCents), [665, 1234])
         XCTAssertEqual(LedgerStats.sumCents(groups[0].expenses), 1899)
         XCTAssertEqual(LedgerStats.sumCents(groups[1].expenses), 500)
         XCTAssertEqual(LedgerStats.totalCents(expenses, in: week), 2399)
@@ -2684,7 +2683,7 @@ final class PayLedgerTests: XCTestCase {
 
         let days = LedgerStats.monthDays(expenses, in: month)
         XCTAssertEqual(days.map(\.dayKey), ["2026-11-01", "2026-11-30"])
-        XCTAssertEqual(days[0].expenses.count, 2)
+        XCTAssertEqual(days[0].expenses.map(\.amountCents), [2000, 1000])
         XCTAssertEqual(LedgerStats.sumCents(days[0].expenses), 3000)
         XCTAssertEqual(LedgerStats.sumCents(days[1].expenses), 3450)
         XCTAssertEqual(LedgerStats.totalCents(expenses, in: month), 6450)

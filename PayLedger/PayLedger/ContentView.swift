@@ -90,7 +90,7 @@ struct ContentView: View {
                         Text("暂无记录，点下方「记一笔」开始。")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(store.expenses) { expense in
+                        ForEach(store.expenses.reversed()) { expense in
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(categoryStore.primaryName(for: expense.categoryID))
