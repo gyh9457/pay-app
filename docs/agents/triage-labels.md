@@ -12,4 +12,4 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-Delivery also uses `in-progress`, `needs-codex` (waiting for a Codex decision), `ready-for-review`, and `done`. A recoverable interruption leaves an `in-progress` issue eligible for resumption after the previous execution is confirmed stopped. When review requests changes, Codex records the failed criteria and returns the issue to `ready-for-agent`.
+GitHub delivery labels also include `in-progress` (implementation and verification underway) and `ready-for-review` (the PR is ready for review and merge checks). Implementation issues reach **Closed as completed** after their PR merges. `done` remains the historical Markdown status. A recoverable interruption leaves an `in-progress` issue eligible for resumption after the previous execution is confirmed stopped. If self-review finds a failed criterion, the agent records it, fixes the issue, and reruns the relevant checks.

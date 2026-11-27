@@ -1,6 +1,6 @@
 # 05 验证首版完整流程
 
-Status: ready-for-review
+Status: done
 Blocked by: 04
 
 用 iPhone 15 / iOS 17.5 模拟器从干净状态走通离线记账、分类改名、账单展开、历史汇总录入与重启读取。以可复跑的测试和操作记录交给 Codex 验收，修复发现的范围内问题。
@@ -9,6 +9,8 @@ Blocked by: 04
 - [x] 单独记下确实没有执行的录屏比对与真机确认项。
 
 ## 验证记录
+
+- 用户确认已完成验证，同意将本票标记为完成。
 
 CodeBuddy 在 Xcode 15.4、iPhone 15 / iOS 17.5 模拟器上使用隔离的示例账本、分类与历史数据。宿主联网时，116 项单元测试和两批 UI 测试（14 项、13 项）全部通过，模拟器 Release 构建通过。该结果记录的是首版集成验证，后续改动的结果分别见 [06](06-recorded-categories.md) 和 [07](07-edit-delete-expenses.md)。
 

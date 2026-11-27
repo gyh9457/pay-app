@@ -6,16 +6,14 @@
 - 修改金额统计或历史数据导入时，用示例核对启用日边界，确保历史累计只计一次，周账单和分类小计仅汇总逐笔支出。
 - 交互验收以用户的 iOS 26.6 真机为准。交付时说明实际验证过的环境和流程，以及仍需真机确认的部分。
 
-## Agent 分工与交接
+## Git 提交信息
 
-- **Codex** 负责理解和澄清需求、制定方案、拆解任务、审查代码和验收结果。交给执行 agent 前，写清修改范围、依赖、验证方式和验收条件。审查通过后由 Codex 标记完成，需要修复时写明原因和复验条件。
-- **Pi 和 CodeBuddy** 负责领取 Codex 已标记可执行且依赖已满足的任务，完成编码和测试。交回审查时记录改动、验证结果和待确认项。需要调整需求或任务范围时交回 Codex。
-- **接力** 时，先确认上一位执行 agent 已停止，再检查已有改动和验证记录，从留下的进度继续。同一时间只允许一个 agent 修改项目代码。Codex 暂时不可用时，执行 agent 可以继续已拆好的任务，结果留待 Codex 审查。
-- **任务跟踪** 按 `setup-matt-pocock-skills` 确认的项目配置执行。配置确认前，定时任务只检查配置状态。
+- 提交标题沿用项目已有的 Conventional Commits 格式 `type(scope): summary`。`scope` 可省略。使用小写类型和简短的英文动词短语，例如 `feat(expenses): add optional expense notes`、`fix(categories): preserve the selected category`、`docs: document the pull request workflow`。
+- 普通提交和 squash 合并生成的提交都遵循这一格式。执行 `git commit` 或合并前先核对提交标题。通过 GitHub 网页 squash 合并时编辑最终提交标题，通过 `gh pr merge --squash` 合并时用 `--subject` 显式指定标题。
 
 ## Agent skills
 
-- **Issue tracker**：任务和规格使用项目内 Markdown，参见 [任务跟踪](docs/agents/issue-tracker.md)。
+- **Issue tracker**：新任务和规格使用 `gyh9457/pay-app` 的 GitHub Issues，由同一个 agent 通过分支和 PR 交付，历史票据保存在 `.scratch/ledger/`。参见 [任务跟踪](docs/agents/issue-tracker.md)。
 - **Triage labels**：使用上游默认标签和本项目的执行状态，参见 [状态约定](docs/agents/triage-labels.md)。
 - **Domain docs**：采用项目级术语表和 ADR，参见 [领域文档约定](docs/agents/domain.md)。
 
