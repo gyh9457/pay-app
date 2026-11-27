@@ -32,9 +32,6 @@ history.json
 /demo.mp4
 /3199_1795183757.mp4
 
-# Local project planning and agent workflows
-/.agents/
-/.scratch/
+# Local project references
 /docs/agents/
-/AGENTS.md
 /原始需求.md

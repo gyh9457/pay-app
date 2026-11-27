@@ -1,0 +1,4 @@
+interface:
+  display_name: "随手记个人签名续期"
+  short_description: "Renew and reinstall PayLedger on the same iPhone"
+  default_prompt: "用 $payledger-renew 给随手记续签并覆盖安装到原来的 iPhone。"
