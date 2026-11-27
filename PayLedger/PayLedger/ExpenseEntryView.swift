@@ -4,6 +4,7 @@ struct ExpenseEntryView: View {
     @ObservedObject var store: LedgerStore
     @ObservedObject var categoryStore: CategoryStore
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var isAmountFocused: Bool
     private let expense: Expense?
     @State private var amountText: String
     @State private var noteText: String
@@ -43,6 +44,7 @@ struct ExpenseEntryView: View {
                 Section("金额") {
                     TextField("0.00", text: $amountText)
                         .keyboardType(.decimalPad)
+                        .focused($isAmountFocused)
                 }
                 Section("分类") {
                     // The wheel is collapsed by default per the original flow:
@@ -82,6 +84,9 @@ struct ExpenseEntryView: View {
                 }
             }
             .navigationTitle(expense == nil ? "记一笔" : "修改流水")
+            .onAppear {
+                if expense != nil { isAmountFocused = true }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消") { dismiss() }

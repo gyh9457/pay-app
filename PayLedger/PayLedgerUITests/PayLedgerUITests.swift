@@ -7,6 +7,89 @@ import XCTest
 final class PayLedgerUITests: XCTestCase {
     private let exampleAmount = "87.65"
 
+    func testEditingExpenseOpensWithAmountKeyboard() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": "uitest-\(UUID().uuidString).json"]
+        app.launch()
+        save("12.34", in: app)
+
+        tapCell(with: "早午晚餐", in: app)
+        XCTAssertTrue(app.navigationBars["修改流水"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let amount = app.textFields["0.00"]
+        amount.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5) + "23.45")
+        XCTAssertEqual(amount.value as? String, "23.45")
+        app.buttons["取消"].tap()
+        assertPersistedRow(category: "早午晚餐", amount: "12.34", in: app)
+    }
+
+    func testExpenseRowsFollowEntryOrderAfterEditingAndRelaunch() {
+        let app = XCUIApplication()
+        let ledger = "uitest-\(UUID().uuidString).json"
+        app.launchEnvironment = [
+            "PAYLEDGER_TEST_LEDGER": ledger,
+            "PAYLEDGER_TEST_NOW": "2026-11-20T10:00:00"
+        ]
+        app.launch()
+        save("12.34", in: app)
+        save("23.45", in: app)
+
+        func assertHomeOrder(_ expected: [String], line: UInt = #line) {
+            let rows = app.cells.allElementsBoundByIndex
+                .filter { $0.staticTexts["早午晚餐"].exists }
+                .compactMap { row in expected.first { row.staticTexts[$0].exists } }
+            XCTAssertEqual(rows, expected, line: line)
+        }
+
+        func assertBillOrder(_ expected: [String], line: UInt = #line) {
+            let rows = app.staticTexts
+                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "billExpenseAmount-"))
+                .allElementsBoundByIndex.map(\.label)
+            XCTAssertEqual(rows, expected, line: line)
+        }
+
+        assertHomeOrder(["23.45", "12.34"])
+        tapCell(with: "12.34", in: app)
+        let amount = app.textFields["0.00"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.tap()
+        amount.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5) + "34.56")
+        app.buttons["保存"].tap()
+
+        app.terminate()
+        app.launch()
+        let expected = ["23.45", "34.56"]
+        assertHomeOrder(expected)
+
+        openBill("本周", in: app)
+        tapCell(with: "食品酒水", in: app)
+        assertBillOrder(expected)
+        goHome(in: app)
+
+        openBill("本月", in: app)
+        tapCell(with: "合计", in: app)
+        assertBillOrder(expected)
+        goHome(in: app)
+
+        openBill("本年", in: app)
+        guard let november = findCell("11月", in: app, swipeUp: true) else {
+            return XCTFail("年账单应显示 11 月")
+        }
+        november.tap()
+        assertBillOrder(expected)
+
+        // Simulate a later save with an earlier consumption date.
+        app.terminate()
+        app.launchEnvironment["PAYLEDGER_TEST_NOW"] = "2026-11-19T10:00:00"
+        app.launch()
+        save("45.67", in: app)
+        assertHomeOrder(["45.67"] + expected)
+        openBill("本周", in: app)
+        tapCell(with: "食品酒水", in: app)
+        assertBillOrder(["45.67"] + expected)
+    }
+
     func testExampleExpenseIsVisibleAfterSaveAndAfterRelaunch() {
         let ledger = "uitest-\(UUID().uuidString).json"
         let app = XCUIApplication()

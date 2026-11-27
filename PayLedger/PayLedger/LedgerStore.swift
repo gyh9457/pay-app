@@ -103,6 +103,7 @@ enum LedgerStoreError: Error, LocalizedError {
 /// backup-excluded directory in the app's own Application Support.
 /// Nothing is written outside the device's app storage.
 final class LedgerStore: ObservableObject {
+    /// The persisted ledger sequence. New entries append and edits retain their position.
     @Published private(set) var expenses: [Expense] = []
     /// True when a legacy copy was retained because cleanup or its
     /// backup-exclusion marker could not be confirmed. Surfaces the recovery

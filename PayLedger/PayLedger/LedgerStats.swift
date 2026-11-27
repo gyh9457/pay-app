@@ -238,8 +238,7 @@ enum LedgerStats {
         return interval.start < firstUnaffected
     }
 
-    /// One primary-category subtotal in the weekly bill. `expenses` are the
-    /// drill-down rows (ordered by date) revealed when the subtotal expands.
+    /// One weekly category subtotal and its detail rows, most recent entry first.
     struct CategoryGroup: Identifiable, Equatable {
         var id: String { categoryID }
         let categoryID: String
@@ -265,9 +264,8 @@ enum LedgerStats {
         let days: [BillDay]
     }
 
-    /// Groups the week's individual records by primary category. Group order
-    /// follows first appearance so the result is deterministic without needing
-    /// the category tree; the view resolves ids to display names.
+    /// Groups the week's records by primary category in ledger order of first
+    /// appearance. The detail rows within each group are in reverse entry order.
     static func weekCategoryGroups(_ expenses: [Expense], history: HistorySnapshot,
                                    in interval: DateInterval) -> [CategoryGroup] {
         weekCategoryGroups(eligibleExpenses(expenses, history: history), in: interval)
@@ -285,11 +283,11 @@ enum LedgerStats {
         }
         return order.compactMap { id in
             guard let rows = byID[id] else { return nil }
-            return CategoryGroup(categoryID: id, expenses: rows.sorted { $0.date < $1.date })
+            return CategoryGroup(categoryID: id, expenses: Array(rows.reversed()))
         }
     }
 
-    /// The month's individual records grouped by calendar day, oldest first.
+    /// Groups ledger-ordered records by calendar day, with the oldest day first.
     static func monthDays(_ expenses: [Expense], history: HistorySnapshot,
                           in interval: DateInterval) -> [BillDay] {
         monthDays(eligibleExpenses(expenses, history: history), in: interval)
@@ -355,7 +353,7 @@ enum LedgerStats {
         }
         return order.compactMap { key in
             guard let rows = byKey[key], let start = startByKey[key] else { return nil }
-            return BillDay(dayKey: key, date: start, expenses: rows.sorted { $0.date < $1.date })
+            return BillDay(dayKey: key, date: start, expenses: Array(rows.reversed()))
         }.sorted { $0.date < $1.date }
     }
 }
