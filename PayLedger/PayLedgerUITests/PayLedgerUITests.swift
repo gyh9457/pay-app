@@ -25,6 +25,57 @@ final class PayLedgerUITests: XCTestCase {
         assertSummaries(show: exampleAmount, in: app)
     }
 
+    func testExpenseNotePersistsAndCanBeEditedOrCleared() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": "uitest-\(UUID().uuidString).json"]
+        app.launch()
+
+        let note = app.textFields["expenseNote"]
+        func openExpense() throws {
+            let row = try XCTUnwrap(app.cells.allElementsBoundByIndex.first {
+                $0.staticTexts["早午晚餐"].exists && $0.staticTexts[exampleAmount].exists
+            })
+            row.tap()
+            XCTAssertTrue(app.navigationBars["修改流水"].waitForExistence(timeout: 5))
+            XCTAssertTrue(note.waitForExistence(timeout: 5))
+        }
+
+        app.buttons["记一笔"].tap()
+        let amount = app.textFields["0.00"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.tap()
+        amount.typeText(exampleAmount)
+        if !note.isHittable { app.swipeUp() }
+        note.tap()
+        note.typeText("Lunch")
+        app.buttons["保存"].tap()
+
+        app.terminate()
+        app.launch()
+        try openExpense()
+        XCTAssertEqual(note.value as? String, "Lunch")
+        note.tap()
+        note.typeText("!")
+        app.buttons["取消"].tap()
+
+        try openExpense()
+        XCTAssertEqual(note.value as? String, "Lunch")
+        note.tap()
+        note.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5) + "Dinner")
+        app.buttons["保存"].tap()
+
+        try openExpense()
+        XCTAssertEqual(note.value as? String, "Dinner")
+        note.tap()
+        note.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 6))
+        app.buttons["保存"].tap()
+
+        app.terminate()
+        app.launch()
+        try openExpense()
+        XCTAssertEqual(note.value as? String, "选填")
+    }
+
     func testEditFromHomeAndDeleteFromWeekBillPersistAfterRelaunch() throws {
         let app = XCUIApplication()
         app.launchEnvironment = ["PAYLEDGER_TEST_LEDGER": "uitest-\(UUID().uuidString).json"]

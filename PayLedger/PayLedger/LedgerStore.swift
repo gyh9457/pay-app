@@ -252,7 +252,7 @@ final class LedgerStore: ObservableObject {
     /// work happens in `commit`, so any failure leaves the real ledger
     /// byte-for-byte untouched and memory unmodified.
     func addExpense(amountCents: Int, categoryID: String, subcategoryID: String? = nil,
-                    date: Date = Date()) throws {
+                    date: Date = Date(), note: String? = nil) throws {
         guard amountCents > 0 else { return }
         try requireWritableLedger()
 
@@ -262,12 +262,13 @@ final class LedgerStore: ObservableObject {
         let day = ConsumptionDay.from(date, calendar: LedgerStats.calendar)
         let updated = expenses + [Expense(amountCents: amountCents, categoryID: categoryID,
                                           subcategoryID: subcategoryID, date: date,
-                                          consumptionDay: day)]
+                                          consumptionDay: day, note: note)]
         try saveExpenses(updated)
     }
 
+    /// Omit `note` to keep the existing text, or pass an empty string to clear it.
     func updateExpense(_ expense: Expense, amountCents: Int, categoryID: String,
-                       subcategoryID: String?, date: Date? = nil) throws {
+                       subcategoryID: String?, date: Date? = nil, note: String? = nil) throws {
         guard amountCents > 0 else { throw LedgerStoreError.invalidExpenseAmount }
         let index = try indexForChangingExpense(expense)
         let calendar = LedgerStats.calendar
@@ -277,7 +278,7 @@ final class LedgerStore: ObservableObject {
         updated[index] = Expense(id: expense.id, amountCents: amountCents, categoryID: categoryID,
                                  subcategoryID: subcategoryID,
                                  date: selectedDay == originalDay ? expense.date : (date ?? expense.date),
-                                 consumptionDay: selectedDay)
+                                 consumptionDay: selectedDay, note: note ?? expense.note)
         try saveExpenses(updated)
     }
 
