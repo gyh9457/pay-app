@@ -62,6 +62,11 @@ struct ExpenseEntryView: View {
 
                     Button("管理分类") { isManagingCategories = true }
                 }
+                Section("备注") {
+                    TextField("选填", text: $noteText)
+                        .accessibilityLabel("备注")
+                        .accessibilityIdentifier("expenseNote")
+                }
                 Section {
                     if expense != nil {
                         DatePicker("日期", selection: $selectedDate, displayedComponents: .date)
@@ -71,11 +76,6 @@ struct ExpenseEntryView: View {
                         HStack { Text("日期"); Spacer(); Text("今天（默认）").foregroundStyle(.secondary) }
                     }
                     HStack { Text("账户"); Spacer(); Text("现金（默认）").foregroundStyle(.secondary) }
-                }
-                Section("备注") {
-                    TextField("选填", text: $noteText)
-                        .accessibilityLabel("备注")
-                        .accessibilityIdentifier("expenseNote")
                 }
                 if let errorMessage {
                     Section { Text(errorMessage).foregroundStyle(.red) }
